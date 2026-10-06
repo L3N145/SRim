@@ -89,6 +89,11 @@ export class Renderer {
     ctx.save();
     ctx.translate(screenX, screenY);
     ctx.rotate(creature.rotation);
+    // A small, delayed squash/stretch makes changes of speed feel embodied.
+    // It is intentionally restrained: softness, not cartoon exaggeration.
+    const softStretch = creature.bodyStretch * 0.055;
+    const softSquish = creature.bodySquish * 0.035;
+    ctx.scale(1 + softStretch, 1 - softStretch * 0.72 - softSquish);
 
     const auraR = baseRadius * (2.0 + bloom * 0.8 + ribbon * 0.3);
     const auraGrad = ctx.createRadialGradient(0, 0, 2, 0, 0, auraR);

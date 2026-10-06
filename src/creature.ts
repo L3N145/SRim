@@ -45,6 +45,9 @@ export class Creature {
   // This is intentionally not a mathematically exact 1/f process; it is a
   // lightweight pink-noise-like approximation made from several time scales.
   bodyOrganic = 0;
+  // Soft-body travel deformation: the body lags behind changes in motion.
+  bodySquish = 0;
+  bodyStretch = 0;
   private organicPhase = 0;
 
   // Kinematic state is intentionally semantic-free.
@@ -66,6 +69,12 @@ export class Creature {
   private locomotionStrength = 0;
   private locomotionUntil = -Infinity;
   private nextWanderChangeAt = -Infinity;
+  // Soft-body locomotion: velocity follows intention with a lag, then settles
+  // with a small overshoot. This makes movement feel bodily rather than like
+  // a cursor or particle being steered directly.
+  private movementLagX = 0;
+  private movementLagY = 0;
+  private bodySway = 0;
   private wanderTargetTurn = 0;
   private divisionRequestedAt = -Infinity;
 
@@ -101,6 +110,8 @@ export class Creature {
     ripples: readonly RippleInfluence[] = [],
   ) {
     const safeDt = Math.min(Math.max(dt, 0), 0.1);
+    const previousVx = this.vx;
+    const previousVy = this.vy;
     const now = performance.now() / 1000;
     const lateNight = this.isLateNight();
     const micro = this.behavior.getMicroActivity();
@@ -161,11 +172,12 @@ export class Creature {
     this.bodyTension += (tension - this.bodyTension) * Math.min(1, safeDt * 2.2);
     this.bodyOrganic += (organic * 0.43 - this.bodyOrganic) * Math.min(1, safeDt * 2.0);
     const speedRhythm = 0.5 + 0.5 * Math.sin(this.phase * 0.19 + this.data.seed * 5.1);
-    const naturalTarget = 0.19 + micro * 0.28 + speedRhythm * 0.09;
-    this.motionSpeedTarget += (naturalTarget - this.motionSpeedTarget) * Math.min(1, safeDt * 0.55);
-    this.motionSpeed += (this.motionSpeedTarget - this.motionSpeed) * Math.min(1, safeDt * 1.15);
+    const naturalTarget = 0.15 + micro * 0.22 + speedRhythm * 0.065;
+    this.motionSpeedTarget += (naturalTarget - this.motionSpeedTarget) * Math.min(1, safeDt * 0.34);
+    this.motionSpeed += (this.motionSpeedTarget - this.motionSpeed) * Math.min(1, safeDt * 0.82);
 
-    const wandering = 0.15 + micro * 0.32;
+    // Keep locomotion soft: it should feel massive and viscous rather than steered.
+    const wandering = 0.105 + micro * 0.22;
     const noiseX = Math.sin(this.phase * 0.73 + this.data.seed * 8.1);
     const noiseY = Math.cos(this.phase * 0.57 + this.data.seed * 5.7);
     this.vx += noiseX * wandering * safeDt;
@@ -178,8 +190,8 @@ export class Creature {
       const turnNoise = Math.sin(this.phase * 0.47 + this.data.seed * 13.7);
       const drift = (fract(this.data.seed * 31.7 + Math.floor(now / 7.0)) - 0.5) * 1.1;
       this.locomotionBias = this.heading + turnNoise * 0.55 + drift * 0.35;
-      this.locomotionStrength = 0.30 + fract(this.data.seed * 17.3 + Math.floor(now / 5.0)) * 0.45;
-      this.locomotionUntil = now + 2.4 + fract(this.data.seed * 23.1 + Math.floor(now / 11.0)) * 4.0;
+      this.locomotionStrength = 0.20 + fract(this.data.seed * 17.3 + Math.floor(now / 5.0)) * 0.34;
+      this.locomotionUntil = now + 3.6 + fract(this.data.seed * 23.1 + Math.floor(now / 11.0)) * 5.5;
     }
 
     const angleToBias = Math.atan2(
@@ -187,16 +199,16 @@ export class Creature {
       Math.cos(this.locomotionBias - this.heading),
     );
     const steering = angleToBias * this.locomotionStrength;
-    this.angularVelocity += steering * safeDt * (0.55 + this.data.responsiveness * 0.35);
+    this.angularVelocity += steering * safeDt * (0.38 + this.data.responsiveness * 0.24);
 
     if (now >= this.nextWanderChangeAt) {
       const wobble = Math.sin(this.phase * 1.73 + this.data.seed * 11.7);
       this.wanderTargetTurn = wobble * (0.010 + this.data.responsiveness * 0.012);
-      this.nextWanderChangeAt = now + 1.0 + Math.abs(wobble) * 2.0;
+      this.nextWanderChangeAt = now + 1.8 + Math.abs(wobble) * 3.0;
     }
     this.angularVelocity += this.wanderTargetTurn * safeDt;
-    this.angularVelocity += Math.sin(this.phase * 0.31 + this.data.seed * 4) * 0.006 * safeDt;
-    this.angularVelocity *= Math.pow(0.975, safeDt * 60);
+    this.angularVelocity += Math.sin(this.phase * 0.31 + this.data.seed * 4) * 0.004 * safeDt;
+    this.angularVelocity *= Math.pow(0.968, safeDt * 60);
     this.heading += this.angularVelocity * 60 * safeDt;
 
     // Pending events create a barely visible preparation. The user can notice
@@ -218,9 +230,28 @@ export class Creature {
 
     const forwardX = Math.cos(this.heading);
     const forwardY = Math.sin(this.heading);
-    const propulsion = this.motionSpeed * (0.42 + this.data.baseViscosity * 0.52);
-    this.vx += forwardX * propulsion * safeDt;
-    this.vy += forwardY * propulsion * safeDt;
+    // Do not translate intention directly into position. The desired motion
+    // first passes through a soft lag, then the actual body follows it. The
+    // two-stage response creates the slight 'weight' and settling of a soft
+    // organism without making it sluggish.
+    const desiredVX = forwardX * this.motionSpeed * (0.34 + this.data.baseViscosity * 0.44);
+    const desiredVY = forwardY * this.motionSpeed * (0.34 + this.data.baseViscosity * 0.44);
+    const lag = Math.min(1, safeDt * (1.15 + this.data.responsiveness * 0.35));
+    this.movementLagX += (desiredVX - this.movementLagX) * lag;
+    this.movementLagY += (desiredVY - this.movementLagY) * lag;
+    const bodyFollow = Math.min(1, safeDt * (2.0 + this.data.inertia * 1.8));
+    this.vx += (this.movementLagX - this.vx) * bodyFollow;
+    this.vy += (this.movementLagY - this.vy) * bodyFollow;
+
+    // A very small lateral sway keeps the path from reading as perfectly
+    // ballistic. It is coupled to turning, so the body seems to lean into a
+    // change of direction and then gently recover.
+    const turnSway = Math.sin(this.phase * 0.52 + this.data.seed * 8.4) * 0.010;
+    this.bodySway += (turnSway - this.bodySway) * Math.min(1, safeDt * 1.4);
+    const swayX = -forwardY * this.bodySway;
+    const swayY = forwardX * this.bodySway;
+    this.vx += swayX * safeDt;
+    this.vy += swayY * safeDt;
 
     if (this.burst > 0) {
       // Bursts are still noticeable, but they are deliberately capped. The
@@ -246,7 +277,7 @@ export class Creature {
     // Soft speed limit. Instead of clipping velocity abruptly, excess speed
     // is removed gradually so acceleration/deceleration remain visible.
     const speed = Math.hypot(this.vx, this.vy);
-    const maxSpeed = 0.58 + this.burst * 0.08;
+    const maxSpeed = 0.50 + this.burst * 0.07;
     if (speed > maxSpeed) {
       const damping = Math.min(1, safeDt * 2.8);
       const scale = 1 - damping * (1 - maxSpeed / speed);
@@ -254,14 +285,39 @@ export class Creature {
       this.vy *= scale;
     }
 
-    // Slightly higher world-space travel makes the autonomous trajectory
-    // legible on a phone-sized screen.
-    this.x += this.vx * safeDt * 56;
-    this.y += this.vy * safeDt * 56;
-    this.z += this.vz * safeDt * 40;
-    this.rotation += (this.angularVelocity + this.vx * 0.0008) * 60 * safeDt;
+    // Mochi-like locomotion: position follows velocity through a soft lag.
+    // A change of intention therefore first moves the body a little, then the
+    // center catches up. This removes the particle/cursor feeling without
+    // making the creature sluggish.
+    const stepX = this.vx * safeDt * 56;
+    const stepY = this.vy * safeDt * 56;
+    const lagEase = Math.min(1, safeDt * 4.6);
+    this.movementLagX += (stepX - this.movementLagX) * lagEase;
+    this.movementLagY += (stepY - this.movementLagY) * lagEase;
+    this.x += this.movementLagX;
+    this.y += this.movementLagY;
+    this.z += this.vz * safeDt * 36;
 
-    const bodyScale = this.bodyBreath * (0.024 + micro * 0.035) + this.bodyPulse * 0.009 + this.bodyTension * 0.006;
+    // Let the body rotate toward its heading with a soft delay. Stopping and
+    // turning consequently have a tiny settling motion rather than a snap.
+    let headingDelta = this.heading - this.rotation;
+    while (headingDelta > Math.PI) headingDelta -= Math.PI * 2;
+    while (headingDelta < -Math.PI) headingDelta += Math.PI * 2;
+    this.rotation += headingDelta * Math.min(1, safeDt * 1.9);
+
+    // Absorb acceleration into the body as a very restrained squash/stretch.
+    // The effect is intentionally subtle: physical softness, not cartoon slapstick.
+    const speedForShape = Math.hypot(this.vx, this.vy);
+    const accelerationProxy = Math.hypot(this.vx - previousVx, this.vy - previousVy) / Math.max(safeDt, 0.001);
+    const stretchTarget = clamp(accelerationProxy * 0.55 + speedForShape * 0.08, 0, 0.30);
+    const squishTarget = clamp(accelerationProxy * 0.34, 0, 0.18);
+    this.bodyStretch += (stretchTarget - this.bodyStretch) * Math.min(1, safeDt * 2.0);
+    this.bodySquish += (squishTarget - this.bodySquish) * Math.min(1, safeDt * 1.65);
+
+    const speedForBody = Math.min(1, Math.hypot(this.vx, this.vy) / 0.5);
+    const turnForBody = Math.min(1, Math.abs(this.angularVelocity) * 2.8);
+    const bodyScale = this.bodyBreath * (0.024 + micro * 0.035) + this.bodyPulse * 0.009 + this.bodyTension * 0.006
+      + speedForBody * 0.006 - turnForBody * 0.004;
     const breath = Math.sin(this.phase * 0.72 + this.data.seed) * (0.010 + micro * 0.025);
     const visualScaleTarget = this.baseScale * this.targetScale * (1 + bodyScale + breath);
     const morphEase = this.morphReturning ? 0.28 : 1.0;
@@ -432,6 +488,7 @@ export class Creature {
       ribbon: this.ribbon, vortex: this.vortex,
       currentHue: this.currentHue,
       bodyBreath: this.bodyBreath, bodyPulse: this.bodyPulse, bodyTension: this.bodyTension,
+      bodySquish: this.bodySquish, bodyStretch: this.bodyStretch,
     };
   }
 
@@ -446,6 +503,8 @@ export class Creature {
     this.bodyBreath = num('bodyBreath', this.bodyBreath);
     this.bodyPulse = num('bodyPulse', this.bodyPulse);
     this.bodyTension = num('bodyTension', this.bodyTension);
+    this.bodySquish = num('bodySquish', this.bodySquish);
+    this.bodyStretch = num('bodyStretch', this.bodyStretch);
     this.scale = num('scale', this.scale); this.spike = num('spike', this.spike);
     this.bloom = num('bloom', this.bloom); this.stretch = num('stretch', this.stretch);
     this.crystalline = num('crystalline', this.crystalline); this.ribbon = num('ribbon', this.ribbon);
