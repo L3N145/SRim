@@ -34,7 +34,7 @@ const LOCOMOTION = {
  * quiet, higher turns into continuous flicker.
  */
 const LIGHT = {
-  modelRate: 7, gSeen: 0.05, gBody: 0.02, inputMax: 3.2, warmup: 800,
+  modelRate: 7, gSeen: 0.04, gBody: 0.01, inputMax: 3.2, warmup: 800,
   // Light response of the tissue: a brief membrane spike is slowly *accumulated*
   // into a glow (rise), the glow fades more slowly (fall), and a second
   // smoothing stage removes any sharp onset so a blink swells and ebbs.
