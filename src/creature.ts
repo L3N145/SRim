@@ -65,8 +65,8 @@ export class Creature {
   private morphReturning = false;
   private morphIntensity = 0;
   private lastNeighborCheck = -Infinity;
-  private motionSpeed = 0.075;
-  private motionSpeedTarget = 0.075;
+  private motionSpeed = 22;
+  private motionSpeedTarget = 22;
   // Short-lived locomotion intention: a direction tendency that persists for
   // seconds instead of choosing a fresh random direction every frame.
   private locomotionBias = 0;
@@ -185,7 +185,7 @@ export class Creature {
     this.bodyTension += (tension - this.bodyTension) * Math.min(1, safeDt * 2.2);
     this.bodyOrganic += (organic * 0.43 - this.bodyOrganic) * Math.min(1, safeDt * 2.0);
     const speedRhythm = 0.5 + 0.5 * Math.sin(this.phase * 0.19 + this.data.seed * 5.1);
-    const naturalTarget = 0.15 + micro * 0.22 + speedRhythm * 0.065;
+    const naturalTarget = 18 + micro * 9 + speedRhythm * 4;
     this.motionSpeedTarget += (naturalTarget - this.motionSpeedTarget) * Math.min(1, safeDt * 0.34);
     this.motionSpeed += (this.motionSpeedTarget - this.motionSpeed) * Math.min(1, safeDt * 0.82);
 
@@ -214,7 +214,7 @@ export class Creature {
     if (now >= this.locomotionUntil) {
       const turnNoise = Math.sin(this.phase * 0.31 + this.data.seed * 13.7) * 0.18;
       this.locomotionBias = goalDelta + turnNoise;
-      this.locomotionStrength = 0.32 + fract(this.data.seed * 17.3 + Math.floor(now / 5.0)) * 0.26;
+      this.locomotionStrength = 0.18 + fract(this.data.seed * 17.3 + Math.floor(now / 5.0)) * 0.16;
       this.locomotionUntil = now + 4.2 + fract(this.data.seed * 23.1 + Math.floor(now / 11.0)) * 5.0;
     }
 
@@ -222,17 +222,17 @@ export class Creature {
     while (angleToBias > Math.PI) angleToBias -= Math.PI * 2;
     while (angleToBias < -Math.PI) angleToBias += Math.PI * 2;
     const steering = angleToBias * this.locomotionStrength;
-    this.angularVelocity += steering * safeDt * (0.38 + this.data.responsiveness * 0.18);
+    this.angularVelocity += steering * safeDt * (0.22 + this.data.responsiveness * 0.10);
 
     if (now >= this.nextWanderChangeAt) {
       const wobble = Math.sin(this.phase * 1.73 + this.data.seed * 11.7);
       this.wanderTargetTurn = wobble * (0.005 + this.data.responsiveness * 0.006);
-      this.nextWanderChangeAt = now + 3.0 + Math.abs(wobble) * 3.5;
+      this.nextWanderChangeAt = now + 5.0 + Math.abs(wobble) * 4.5;
     }
-    this.angularVelocity += this.wanderTargetTurn * safeDt;
-    this.angularVelocity += Math.sin(this.phase * 0.31 + this.data.seed * 4) * 0.002 * safeDt;
-    this.angularVelocity *= Math.pow(0.945, safeDt * 60);
-    this.angularVelocity = clamp(this.angularVelocity, -0.012, 0.012);
+    this.angularVelocity += this.wanderTargetTurn * safeDt * 0.55;
+    this.angularVelocity += Math.sin(this.phase * 0.31 + this.data.seed * 4) * 0.0007 * safeDt;
+    this.angularVelocity *= Math.pow(0.92, safeDt * 60);
+    this.angularVelocity = clamp(this.angularVelocity, -0.0045, 0.0045);
     this.heading += this.angularVelocity * 60 * safeDt;
 
     // Pending events create a barely visible preparation. The user can notice
@@ -258,8 +258,8 @@ export class Creature {
     // first passes through a soft lag, then the actual body follows it. The
     // two-stage response creates the slight 'weight' and settling of a soft
     // organism without making it sluggish.
-    const desiredVX = forwardX * this.motionSpeed * (0.34 + this.data.baseViscosity * 0.44);
-    const desiredVY = forwardY * this.motionSpeed * (0.34 + this.data.baseViscosity * 0.44);
+    const desiredVX = forwardX * this.motionSpeed;
+    const desiredVY = forwardY * this.motionSpeed;
     const lag = Math.min(1, safeDt * (1.15 + this.data.responsiveness * 0.35));
     this.movementLagX += (desiredVX - this.movementLagX) * lag;
     this.movementLagY += (desiredVY - this.movementLagY) * lag;
@@ -280,8 +280,8 @@ export class Creature {
     if (this.burst > 0) {
       // Bursts are still noticeable, but they are deliberately capped. The
       // creature should never look like a projectile crossing the screen.
-      const burstForce = 0.11 * this.burst;
-      this.motionSpeedTarget = Math.min(0.24, this.motionSpeedTarget + 0.035 * this.burst);
+      const burstForce = 7.5 * this.burst;
+      this.motionSpeedTarget = Math.min(38, this.motionSpeedTarget + 5 * this.burst);
       this.vx += forwardX * burstForce * safeDt;
       this.vy += forwardY * burstForce * safeDt;
       this.burst = Math.max(0, this.burst - safeDt * 0.75);
@@ -294,14 +294,14 @@ export class Creature {
     if (Math.abs(this.y) > limitY) this.vy -= (this.y / limitY) * 1.6 * safeDt;
     if (Math.abs(this.z) > limitZ) this.vz -= (this.z / limitZ) * 1.8 * safeDt;
 
-    this.vx *= Math.pow(this.data.inertia, safeDt * 60);
-    this.vy *= Math.pow(this.data.inertia, safeDt * 60);
-    this.vz *= Math.pow(this.data.inertia, safeDt * 60);
+    this.vx *= Math.pow(this.data.inertia, safeDt);
+    this.vy *= Math.pow(this.data.inertia, safeDt);
+    this.vz *= Math.pow(this.data.inertia, safeDt);
 
     // Soft speed limit. Instead of clipping velocity abruptly, excess speed
     // is removed gradually so acceleration/deceleration remain visible.
     const speed = Math.hypot(this.vx, this.vy);
-    const maxSpeed = 0.50 + this.burst * 0.07;
+    const maxSpeed = 34 + this.burst * 8;
     if (speed > maxSpeed) {
       const damping = Math.min(1, safeDt * 2.8);
       const scale = 1 - damping * (1 - maxSpeed / speed);
@@ -314,8 +314,8 @@ export class Creature {
     // are world-space distances. Mixing those units was the v9.3 movement bug
     // that made creatures barely translate while their heading kept changing.
     // Keep position integration in world space so the body actually travels.
-    this.x += this.vx * safeDt * 56;
-    this.y += this.vy * safeDt * 56;
+    this.x += this.vx * safeDt;
+    this.y += this.vy * safeDt;
     this.z += this.vz * safeDt * 36;
 
     // Let the body rotate toward its heading with a soft delay. Stopping and
@@ -604,22 +604,22 @@ export class Creature {
         break;
       case 'orbit':
         if (nearest) {
-          this.angularVelocity += this.preferredTurn * 0.012;
-          this.motionSpeedTarget = Math.min(0.14, this.motionSpeedTarget + 0.012);
+          this.angularVelocity += this.preferredTurn * 0.003;
+          this.motionSpeedTarget = Math.min(30, this.motionSpeedTarget + 2.5);
         }
         break;
       case 'hesitate':
         this.vx *= 0.72;
         this.vy *= 0.72;
-        this.motionSpeedTarget = Math.max(0.075, this.motionSpeedTarget * 0.78);
-        this.angularVelocity += this.preferredTurn * 0.012;
+        this.motionSpeedTarget = Math.max(11, this.motionSpeedTarget * 0.78);
+        this.angularVelocity += this.preferredTurn * 0.003;
         break;
       case 'burst':
         this.burst = Math.max(this.burst, 0.55 + event.anticipation * 0.42);
-        this.motionSpeedTarget = Math.min(0.22, this.motionSpeedTarget + 0.045);
+        this.motionSpeedTarget = Math.min(36, this.motionSpeedTarget + 7);
         break;
       case 'drift':
-        this.angularVelocity += this.preferredTurn * 0.004;
+        this.angularVelocity += this.preferredTurn * 0.0012;
         break;
       case 'expand': this.applyMorph('bloom'); break;
       case 'contract': this.applyMorph('compact'); break;
@@ -656,7 +656,7 @@ export class Creature {
     // feel: the creature has to turn before its trajectory changes.
     const turn = Math.max(-0.032, Math.min(0.032, delta)) * strength;
     this.angularVelocity += turn;
-    this.motionSpeedTarget = Math.min(0.16, this.motionSpeedTarget + strength * 0.012);
+    this.motionSpeedTarget = Math.min(31, this.motionSpeedTarget + strength * 7);
   }
 
   private isLateNight(): boolean {
