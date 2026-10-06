@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#020408" />
+    <meta name="description" content="静かにそこにいる、小さな抽象生命体。" />
+    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <title>Quiet Life</title>
+  </head>
+  <body>
+    <main id="app" aria-label="Quiet Life">
+      <canvas id="life-canvas" aria-label="抽象生命体"></canvas>
+      <div class="vignette" aria-hidden="true"></div>
+      
+      <header class="topbar">
+        <a
+          href="https://github.com/L3N145/malice_creature"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="help-link"
+          aria-label="GitHubリポジトリへ"
+        >?</a>
+      </header>
+
+      <div class="controls">
+        <button class="control-button" id="mic-button" type="button" aria-label="マイク切り替え">
+          <span class="mic-dot" aria-hidden="true"></span>
+          <span id="mic-status-text">MIC OFF</span>
+        </button>
+      </div>
+    </main>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

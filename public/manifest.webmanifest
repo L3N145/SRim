@@ -1,0 +1,13 @@
+{
+  "name": "Quiet Life",
+  "short_name": "Quiet Life",
+  "description": "静かにそこにいる、小さな抽象生命体。",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#070910",
+  "theme_color": "#070910",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
