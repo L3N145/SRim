@@ -33,7 +33,7 @@ const LOCOMOTION = {
  * The input current must stay in the bursting window (about 3.0-3.25): lower is
  * quiet, higher turns into continuous flicker.
  */
-const LIGHT = { modelRate: 10, gSeen: 0.05, gBody: 0.02, inputMax: 3.2, warmup: 800 };
+const LIGHT = { modelRate: 10, gSeen: 0.03, gBody: 0.01, inputMax: 3.2, warmup: 800 };
 const WORLD = { xFrac: 0.34, xMax: 240, yFrac: 0.34, yMax: 320 };
 
 function angleDiff(target: number, from: number): number {
@@ -149,7 +149,7 @@ export class Creature {
     // population contains noticeably smaller bodies. This lowers the
     // average body size without changing the maximum.
     this.baseScale = 0.76 + fract(data.seed * 7.31) * 0.52;
-    this.memInput = 3.04 + fract(data.seed * 6.13) * 0.10;
+    this.memInput = 3.02 + fract(data.seed * 6.13) * 0.10;
     this.memSlow = 0.002 + fract(data.seed * 4.71) * 0.001;
     this.memX = -1.4 + fract(data.seed * 7.7) * 0.5;
     this.memY = -7 + fract(data.seed * 5.3) * 3;
