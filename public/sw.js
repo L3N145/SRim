@@ -1,4 +1,4 @@
-const CACHE_NAME = 'quiet-life-v1';
+const CACHE_NAME = 'srim-v1';
 
 self.addEventListener('install', () => {
   self.skipWaiting();

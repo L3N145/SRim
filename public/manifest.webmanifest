@@ -1,6 +1,6 @@
 {
-  "name": "Quiet Life",
-  "short_name": "Quiet Life",
+  "name": "SRim",
+  "short_name": "SRim",
   "description": "静かにそこにいる、小さな抽象生命体。",
   "start_url": "./",
   "display": "standalone",
@@ -8,6 +8,11 @@
   "theme_color": "#070910",
   "orientation": "portrait",
   "icons": [
-    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
   ]
 }

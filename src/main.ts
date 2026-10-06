@@ -9,12 +9,12 @@ import { collectNeighbors, collectRippleInfluences } from './world';
 import { createRipple, updateRipple, type Ripple } from './ripple';
 
 interface SavedCreatureState {
-  version: 1;
+  version: 2;
   savedAt: number;
   creatures: unknown[];
 }
 
-const WORLD_KEY = 'quiet_life_world_state_v1';
+const WORLD_KEY = 'quiet_life_world_state_v2';
 const baseData = loadCreatureData('0');
 const sound = new CreatureSound();
 const provider = new ResourceProvider();
@@ -41,7 +41,8 @@ function deriveDefaults(base: CreatureData, index: number): CreatureData {
   };
 }
 
-const creatures = [0, 1, 2].map((index) => {
+let nextBirthId = 0;
+const creatures: Creature[] = [0, 1, 2].map((index) => {
   const defaults = deriveDefaults(baseData, index);
   return new Creature(loadCreatureData(String(index), defaults), sound, provider);
 });
@@ -61,6 +62,10 @@ window.addEventListener('resize', () => { bounds = renderer.resize(); });
 let isAudioActive = false;
 let lastTime = performance.now();
 let saveAccumulator = 0;
+let lastBirthAt = -Infinity;
+const BIRTH_COOLDOWN = 75;
+// Not a compute limit. This is only a visual-density guard for small screens.
+const MAX_CREATURES = 12;
 function loop(now: number) {
   const dt = Math.min((now - lastTime) / 1000, 0.1);
   lastTime = now;
@@ -72,8 +77,20 @@ function loop(now: number) {
   }
 
   for (let i = 0; i < creatures.length; i += 1) {
-    const rippleInfluences = collectRippleInfluences(ripples, creatures[i].x, creatures[i].y);
+    const rippleInfluences = collectRippleInfluences(ripples, creatures[i].x, creatures[i].y, creatures[i].z);
     creatures[i].update(dt, bounds, collectNeighbors(creatures, i), rippleInfluences);
+  }
+
+  // Birth is a real population event, not a two-core visual effect. The
+  // parent remains and a nearby child inherits a few traits with variation.
+  if (creatures.length < MAX_CREATURES && now / 1000 > lastBirthAt + BIRTH_COOLDOWN) {
+    for (let i = 0; i < creatures.length; i += 1) {
+      const parent = creatures[i];
+      if (!parent.consumeDivisionRequest()) continue;
+      addOffspring(parent);
+      lastBirthAt = now / 1000;
+      break;
+    }
   }
 
   saveAccumulator += dt;
@@ -130,23 +147,31 @@ canvas.style.touchAction = 'none';
 let lastTapAt = -Infinity;
 const TAP_COOLDOWN = 0.32;
 
-window.addEventListener('pointerdown', (e) => {
-  if ((e.target as HTMLElement).closest('.controls') || (e.target as HTMLElement).closest('.topbar')) return;
+canvas.addEventListener('pointerdown', (e) => {
   const now = performance.now() / 1000;
   if (now - lastTapAt < TAP_COOLDOWN) return;
   lastTapAt = now;
   sound.unlock();
   resetIdleTimer();
 
-  const normX = e.clientX / bounds.width - 0.5;
-  const normY = e.clientY / bounds.height - 0.5;
-  const worldX = normX * 240;
-  const worldY = normY * 320;
+  const rect = canvas.getBoundingClientRect();
+  const localX = e.clientX - rect.left;
+  const localY = e.clientY - rect.top;
+  if (localX < 0 || localY < 0 || localX > rect.width || localY > rect.height) return;
+
+  // Canvas-local coordinates are converted directly into the same world
+  // coordinate system used by rendering. This avoids viewport/scroll/DPR
+  // offsets and makes the visible ripple land exactly under the finger.
+  const worldX = localX - rect.width / 2;
+  const worldY = localY - rect.height / 2;
 
   rippleSeed += 0.61803398875;
   ripples.push(createRipple(worldX, worldY, rippleSeed));
 
-  // The tap is a world disturbance, not direct manipulation of a creature.
+  // Immediate local impulse gives the tap meaning before the expanding ring
+  // reaches a creature. The creature itself performs the depth-correct hit test.
+  for (const creature of creatures) creature.handleTouch(worldX, worldY);
+
   persistWorldState();
 });
 
@@ -172,9 +197,9 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
 function persistWorldState() {
   try {
     const state: SavedCreatureState = {
-      version: 1,
+      version: 2,
       savedAt: Date.now(),
-      creatures: creatures.map((creature) => creature.getPersistentState()),
+      creatures: creatures.map((creature) => ({ ...creature.getPersistentState(), data: creature.data })),
     };
     localStorage.setItem(WORLD_KEY, JSON.stringify(state));
     for (const creature of creatures) saveCreatureData(creature.data);
@@ -189,10 +214,55 @@ function restoreWorldState() {
     if (!raw) return;
     const state = JSON.parse(raw) as SavedCreatureState;
     if (![1, 2].includes(state?.version) || !Array.isArray(state.creatures)) return;
-    state.creatures.forEach((saved, index) => creatures[index]?.restorePersistentState(saved));
+    state.creatures.forEach((saved: any, index) => {
+      if (creatures[index]) {
+        creatures[index].restorePersistentState(saved);
+        return;
+      }
+      if (!saved || typeof saved !== 'object') return;
+      const savedData = saved.data && typeof saved.data === 'object' ? saved.data as CreatureData : null;
+      if (!savedData) return;
+      const instanceId = typeof savedData.instanceId === 'string' ? savedData.instanceId : `birth-${index}`;
+      const child = new Creature(loadCreatureData(instanceId, savedData), sound, provider);
+      child.restorePersistentState(saved);
+      creatures.push(child);
+    });
   } catch {
     // Ignore corrupt or unavailable persistence.
   }
+}
+
+
+function addOffspring(parent: Creature): void {
+  const parentData = parent.data;
+  const id = `birth-${Date.now()}-${nextBirthId++}`;
+  const seed = fract(parentData.seed * 1.61803398875 + (nextBirthId + 1) * 0.271828 + parent.x * 0.0007 + parent.y * 0.0011);
+  const childData: CreatureData = {
+    ...parentData,
+    seed,
+    instanceId: id,
+    createdAt: Date.now(),
+    totalInteractions: 0,
+    totalSpokenDuration: 0,
+    totalQuietDuration: 0,
+    lastMacroActionAt: null,
+    baseViscosity: clamp(parentData.baseViscosity * (0.86 + seed * 0.28), 0.01, 0.08),
+    responsiveness: clamp(parentData.responsiveness * (0.84 + seed * 0.32), 0.10, 0.80),
+    inertia: clamp(parentData.inertia + (seed - 0.5) * 0.045, 0.80, 0.985),
+    colorHueOffset: parentData.colorHueOffset + Math.floor((seed - 0.5) * 28),
+    recentActions: [],
+  };
+  const child = new Creature(loadCreatureData(id, childData), sound, provider);
+  const angle = seed * Math.PI * 2;
+  const separation = parent.getCollisionRadius() * 1.25;
+  child.x = parent.x + Math.cos(angle) * separation;
+  child.y = parent.y + Math.sin(angle) * separation;
+  child.z = parent.z + (seed - 0.5) * 10;
+  child.heading = parent.heading + (seed - 0.5) * 1.2;
+  child.vx = parent.vx * 0.72 + Math.cos(angle) * 0.045;
+  child.vy = parent.vy * 0.72 + Math.sin(angle) * 0.045;
+  child.vz = parent.vz * 0.72;
+  creatures.push(child);
 }
 
 function fract(value: number): number { return value - Math.floor(value); }

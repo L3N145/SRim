@@ -2,12 +2,12 @@ import { SeededRandom } from './random';
 
 export type MorphAction =
   | 'normal' | 'spiky' | 'bloom' | 'compact' | 'droplet'
-  | 'crystalline' | 'ribbon' | 'mitosis' | 'vortex' | 'giant';
+  | 'crystalline' | 'ribbon' | 'vortex' | 'giant';
 
 export type BehaviorAction = MorphAction |
   'idle' | 'breathe' | 'drift' | 'approach' | 'retreat' |
   'expand' | 'contract' | 'rotate' | 'deform' |
-  'burst' | 'hesitate' | 'seek' | 'orbit';
+  'burst' | 'hesitate' | 'seek' | 'orbit' | 'birth';
 
 export type BehaviorSource = 'autonomous' | 'touch' | 'audio' | 'interaction';
 
@@ -222,7 +222,7 @@ export class BehaviorScheduler {
           { item: 'orbit', weight: 6 }, { item: 'retreat', weight: 7 },
           { item: 'approach', weight: 7 }, { item: 'bloom', weight: 10 },
           { item: 'vortex', weight: 5 }, { item: 'ribbon', weight: 5 },
-          { item: 'crystalline', weight: 4 }, { item: 'mitosis', weight: 3 },
+          { item: 'crystalline', weight: 4 }, { item: 'birth', weight: 1.2 },
           { item: 'giant', weight: 4 },
         ]
       : [
@@ -258,7 +258,7 @@ export class BehaviorScheduler {
 function isMorphAction(action: string): action is MorphAction {
   return action === 'normal' || action === 'spiky' || action === 'bloom' || action === 'compact'
     || action === 'droplet' || action === 'crystalline' || action === 'ribbon'
-    || action === 'mitosis' || action === 'vortex' || action === 'giant';
+    || action === 'vortex' || action === 'giant';
 }
 
 function clamp(value: number, min = 0, max = 1): number {

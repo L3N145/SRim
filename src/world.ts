@@ -60,12 +60,16 @@ export function collectRippleInfluences(
   ripples: readonly Ripple[],
   x: number,
   y: number,
+  z = 0,
 ): RippleInfluence[] {
   const result: RippleInfluence[] = [];
 
   for (const ripple of ripples) {
-    const dx = x - ripple.x;
-    const dy = y - ripple.y;
+    const perspective = 380 / (380 + z);
+    const projectedX = x * perspective;
+    const projectedY = y * perspective;
+    const dx = projectedX - ripple.x;
+    const dy = projectedY - ripple.y;
     const distance = Math.hypot(dx, dy);
     const radius = getRippleRadius(ripple);
     const ringDistance = Math.abs(distance - radius);

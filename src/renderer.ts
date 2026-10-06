@@ -6,6 +6,12 @@ function microWobble(phase: number, angle: number, scale: number): number {
   return (0.5 + 0.5 * Math.sin(phase * 1.7 + angle * 3.0 + scale * 5.0));
 }
 
+function fleshWobble(phase: number, angle: number, seed: number): number {
+  return Math.sin(phase * 2.35 + angle * 5.0 + seed * 17.0) * 0.52
+    + Math.sin(phase * 0.91 - angle * 2.0 + seed * 6.0) * 0.30
+    + Math.sin(phase * 4.7 + angle * 9.0 + seed * 2.0) * 0.18;
+}
+
 export class Renderer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -74,8 +80,10 @@ export class Renderer {
     const stretch = creature.stretch;
     const cryst = creature.crystalline;
     const ribbon = creature.ribbon;
-    const mitosis = creature.mitosis;
     const vortex = creature.vortex;
+    const breath = creature.bodyBreath;
+    const pulse = creature.bodyPulse;
+    const tension = creature.bodyTension;
 
     ctx.save();
     ctx.translate(screenX, screenY);
@@ -94,7 +102,11 @@ export class Renderer {
     const spikeFreq = creature.targetDNA.spikeCount;
     for (let i = 0; i < numPoints; i += 1) {
       const angle = (i / numPoints) * Math.PI * 2;
-      let r = baseRadius + Math.sin(phase * 0.8 + angle * 2) * (2.2 + microWobble(phase, angle, creature.getBaseScale()) * 0.9) * (1.0 - spike);
+      const livingWobble = fleshWobble(phase, angle, creature.data.seed);
+      const contraction = breath * 1.65 + pulse * 0.72;
+      let r = baseRadius * (1 + contraction * 0.026)
+        + Math.sin(phase * 0.8 + angle * 2) * (2.0 + microWobble(phase, angle, creature.getBaseScale()) * 0.8) * (1.0 - spike)
+        + livingWobble * (0.75 + tension * 0.7) * perspective;
       if (spike > 0.01) {
         const spikeWave = Math.pow(Math.abs(Math.sin(angle * (spikeFreq / 2) + phase * 0.2)), 3.0);
         r += spikeWave * (22 * spike * perspective);
@@ -139,59 +151,43 @@ export class Renderer {
     ctx.lineWidth = 1.0 + spike * 0.8 + cryst * 0.5;
     ctx.stroke();
 
-    const corePulse = Math.sin(phase * 0.6) * 0.6;
+    const corePulse = breath * 1.6 + pulse * 0.9 + Math.sin(phase * 0.6) * 0.45;
     const coreRadius = Math.max(3, (7.5 + bloom * 4.0 + corePulse) * perspective);
-    if (mitosis > 0.05) {
-      const splitDist = 12 * mitosis * perspective;
-      const rotMitosis = phase * 1.2;
-      for (const dir of [-1, 1]) {
-        const cx = Math.cos(rotMitosis) * splitDist * dir;
-        const cy = Math.sin(rotMitosis) * splitDist * dir;
-        const mGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreRadius * 1.2);
-        mGrad.addColorStop(0, '#ffffff');
-        mGrad.addColorStop(0.4, `hsla(${hue - 20}, 100%, 90%, ${0.85 * perspective})`);
-        mGrad.addColorStop(1, 'transparent');
-        ctx.beginPath(); ctx.arc(cx, cy, coreRadius * 1.2, 0, Math.PI * 2); ctx.fillStyle = mGrad; ctx.fill();
-      }
-    } else {
-      const coreGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, coreRadius * 1.8);
-      coreGrad.addColorStop(0, '#ffffff');
-      coreGrad.addColorStop(0.35, `hsla(${hue - 20}, 100%, 90%, ${(0.85 + bloom * 0.1) * perspective})`);
-      coreGrad.addColorStop(0.75, `hsla(${hue}, 85%, 65%, ${0.25 * perspective})`);
-      coreGrad.addColorStop(1, 'transparent');
-      ctx.beginPath(); ctx.arc(0, 0, coreRadius * 1.8, 0, Math.PI * 2); ctx.fillStyle = coreGrad; ctx.fill();
-    }
+    const coreGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, coreRadius * 1.8);
+    coreGrad.addColorStop(0, '#ffffff');
+    coreGrad.addColorStop(0.35, `hsla(${hue - 20}, 100%, 90%, ${(0.85 + bloom * 0.1) * perspective})`);
+    coreGrad.addColorStop(0.75, `hsla(${hue}, 85%, 65%, ${0.25 * perspective})`);
+    coreGrad.addColorStop(1, 'transparent');
+    ctx.beginPath(); ctx.arc(0, 0, coreRadius * 1.8, 0, Math.PI * 2); ctx.fillStyle = coreGrad; ctx.fill();
     ctx.restore();
 
-    // Resource fragments are presented as a readable floating card rather
-    // than being trapped inside the tiny body. This keeps the creature itself
-    // abstract while making a rare Wikipedia fragment legible on phones.
+    // A rare external image appears as if it is inside the creature, like
+    // a tiny window or marble embedded in its translucent body. It should
+    // feel discovered rather than presented as UI.
     if (creature.carriedImage && creature.imageAlpha > 0.01) {
-      const cardWidth = Math.min(132, Math.max(104, width * 0.30));
-      const imageSize = cardWidth - 16;
-      const cardHeight = imageSize + 34;
-      const cardX = Math.max(8, Math.min(width - cardWidth - 8, screenX + baseRadius + 10));
-      const cardY = Math.max(8, Math.min(height - cardHeight - 8, screenY - cardHeight - baseRadius - 8));
+      const portalSize = Math.min(48, Math.max(32, baseRadius * 0.98));
       ctx.save();
-      ctx.globalAlpha = creature.imageAlpha * 0.92;
-      ctx.fillStyle = 'rgba(8, 12, 20, 0.88)';
-      ctx.strokeStyle = 'rgba(220, 235, 255, 0.24)';
-      ctx.lineWidth = 1;
+      ctx.globalAlpha = creature.imageAlpha * perspective;
       ctx.beginPath();
-      ctx.roundRect(cardX, cardY, cardWidth, cardHeight, 10);
-      ctx.fill();
-      ctx.stroke();
-      ctx.globalAlpha = creature.imageAlpha;
-      ctx.drawImage(creature.carriedImage, cardX + 8, cardY + 8, imageSize, imageSize);
-      if (creature.imageCaption) {
-        ctx.globalAlpha = creature.imageAlpha * 0.9;
-        ctx.fillStyle = 'rgba(255,255,255,0.86)';
-        ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'middle';
-        const title = creature.imageCaption.length > 19 ? `${creature.imageCaption.slice(0, 18)}…` : creature.imageCaption;
-        ctx.fillText(title, cardX + 9, cardY + imageSize + 22);
-      }
+      ctx.arc(screenX, screenY, portalSize, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.globalAlpha = creature.imageAlpha * 0.58 * perspective;
+      ctx.filter = 'saturate(0.72) contrast(0.92)';
+      ctx.drawImage(creature.carriedImage, screenX - portalSize, screenY - portalSize, portalSize * 2, portalSize * 2);
+      ctx.filter = 'none';
+      const inner = ctx.createRadialGradient(screenX, screenY, 0, screenX, screenY, portalSize);
+      inner.addColorStop(0, 'rgba(255,255,255,0.06)');
+      inner.addColorStop(0.65, 'rgba(20,30,50,0.02)');
+      inner.addColorStop(1, 'rgba(0,0,0,0.48)');
+      ctx.fillStyle = inner;
+      ctx.fillRect(screenX - portalSize, screenY - portalSize, portalSize * 2, portalSize * 2);
+      ctx.restore();
+
+      ctx.save();
+      ctx.globalAlpha = creature.imageAlpha * 0.38 * perspective;
+      ctx.strokeStyle = `hsla(${hue - 10}, 90%, 92%, 0.75)`;
+      ctx.lineWidth = 0.7;
+      ctx.beginPath(); ctx.arc(screenX, screenY, portalSize + 1.5, 0, Math.PI * 2); ctx.stroke();
       ctx.restore();
     }
   }
