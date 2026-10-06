@@ -215,23 +215,24 @@ export class Creature {
       const turnNoise = Math.sin(this.phase * 0.31 + this.data.seed * 13.7) * 0.18;
       this.locomotionBias = goalDelta + turnNoise;
       this.locomotionStrength = 0.32 + fract(this.data.seed * 17.3 + Math.floor(now / 5.0)) * 0.26;
-      this.locomotionUntil = now + 2.8 + fract(this.data.seed * 23.1 + Math.floor(now / 11.0)) * 4.2;
+      this.locomotionUntil = now + 4.2 + fract(this.data.seed * 23.1 + Math.floor(now / 11.0)) * 5.0;
     }
 
     let angleToBias = this.locomotionBias;
     while (angleToBias > Math.PI) angleToBias -= Math.PI * 2;
     while (angleToBias < -Math.PI) angleToBias += Math.PI * 2;
     const steering = angleToBias * this.locomotionStrength;
-    this.angularVelocity += steering * safeDt * (0.62 + this.data.responsiveness * 0.28);
+    this.angularVelocity += steering * safeDt * (0.38 + this.data.responsiveness * 0.18);
 
     if (now >= this.nextWanderChangeAt) {
       const wobble = Math.sin(this.phase * 1.73 + this.data.seed * 11.7);
-      this.wanderTargetTurn = wobble * (0.010 + this.data.responsiveness * 0.012);
-      this.nextWanderChangeAt = now + 1.8 + Math.abs(wobble) * 3.0;
+      this.wanderTargetTurn = wobble * (0.005 + this.data.responsiveness * 0.006);
+      this.nextWanderChangeAt = now + 3.0 + Math.abs(wobble) * 3.5;
     }
     this.angularVelocity += this.wanderTargetTurn * safeDt;
-    this.angularVelocity += Math.sin(this.phase * 0.31 + this.data.seed * 4) * 0.004 * safeDt;
-    this.angularVelocity *= Math.pow(0.952, safeDt * 60);
+    this.angularVelocity += Math.sin(this.phase * 0.31 + this.data.seed * 4) * 0.002 * safeDt;
+    this.angularVelocity *= Math.pow(0.945, safeDt * 60);
+    this.angularVelocity = clamp(this.angularVelocity, -0.012, 0.012);
     this.heading += this.angularVelocity * 60 * safeDt;
 
     // Pending events create a barely visible preparation. The user can notice
@@ -308,17 +309,13 @@ export class Creature {
       this.vy *= scale;
     }
 
-    // Mochi-like locomotion: position follows velocity through a soft lag.
-    // A change of intention therefore first moves the body a little, then the
-    // center catches up. This removes the particle/cursor feeling without
-    // making the creature sluggish.
-    const stepX = this.vx * safeDt * 56;
-    const stepY = this.vy * safeDt * 56;
-    const lagEase = Math.min(1, safeDt * 4.6);
-    this.movementLagX += (stepX - this.movementLagX) * lagEase;
-    this.movementLagY += (stepY - this.movementLagY) * lagEase;
-    this.x += this.movementLagX;
-    this.y += this.movementLagY;
+    // The velocity lag above is the soft-body delay. Do not apply a second
+    // lag here: movementLagX/Y are velocity-space values, while stepX/stepY
+    // are world-space distances. Mixing those units was the v9.3 movement bug
+    // that made creatures barely translate while their heading kept changing.
+    // Keep position integration in world space so the body actually travels.
+    this.x += this.vx * safeDt * 56;
+    this.y += this.vy * safeDt * 56;
     this.z += this.vz * safeDt * 36;
 
     // Let the body rotate toward its heading with a soft delay. Stopping and
