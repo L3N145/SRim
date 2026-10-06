@@ -60,6 +60,11 @@ export class Creature {
   private lastNeighborCheck = -Infinity;
   private motionSpeed = 0.075;
   private motionSpeedTarget = 0.075;
+  // Short-lived locomotion intention: a direction tendency that persists for
+  // seconds instead of choosing a fresh random direction every frame.
+  private locomotionBias = 0;
+  private locomotionStrength = 0;
+  private locomotionUntil = -Infinity;
   private nextWanderChangeAt = -Infinity;
   private wanderTargetTurn = 0;
   private divisionRequestedAt = -Infinity;
@@ -79,7 +84,8 @@ export class Creature {
     this.heading = ((data.seed * 17.17) % (Math.PI * 2));
     this.preferredTurn = data.seed > 0.5 ? 1 : -1;
     this.baseScale = 1.0 + fract(data.seed * 7.31) * 0.28;
-    this.nextWanderChangeAt = performance.now() / 1000 + 1.5 + fract(data.seed * 5.17) * 2.5;
+    this.nextWanderChangeAt = performance.now() / 1000 + 0.9 + fract(data.seed * 5.17) * 1.8;
+    this.locomotionBias = this.heading + (fract(data.seed * 3.71) - 0.5) * 0.8;
     this.activeDNA = DNAEngine.synthesize(data.seed);
     this.targetDNA = { ...this.activeDNA };
     this.currentHue = this.activeDNA.hue + data.colorHueOffset;
@@ -162,16 +168,32 @@ export class Creature {
     this.vx += noiseX * wandering * safeDt;
     this.vy += noiseY * wandering * safeDt;
 
-    // Ordinary locomotion has its own low-frequency direction changes,
-    // separate from bursts, hesitations, and morphology.
+    // Ordinary locomotion has a short-lived, non-semantic direction tendency.
+    // The tendency lasts for seconds, so motion has continuity rather than
+    // becoming a frame-by-frame random walk.
+    if (now >= this.locomotionUntil) {
+      const turnNoise = Math.sin(this.phase * 0.47 + this.data.seed * 13.7);
+      const drift = (fract(this.data.seed * 31.7 + Math.floor(now / 7.0)) - 0.5) * 1.1;
+      this.locomotionBias = this.heading + turnNoise * 0.55 + drift * 0.35;
+      this.locomotionStrength = 0.30 + fract(this.data.seed * 17.3 + Math.floor(now / 5.0)) * 0.45;
+      this.locomotionUntil = now + 2.4 + fract(this.data.seed * 23.1 + Math.floor(now / 11.0)) * 4.0;
+    }
+
+    const angleToBias = Math.atan2(
+      Math.sin(this.locomotionBias - this.heading),
+      Math.cos(this.locomotionBias - this.heading),
+    );
+    const steering = angleToBias * this.locomotionStrength;
+    this.angularVelocity += steering * safeDt * (0.55 + this.data.responsiveness * 0.35);
+
     if (now >= this.nextWanderChangeAt) {
       const wobble = Math.sin(this.phase * 1.73 + this.data.seed * 11.7);
-      this.wanderTargetTurn = wobble * (0.018 + this.data.responsiveness * 0.020);
-      this.nextWanderChangeAt = now + 0.75 + Math.abs(wobble) * 1.9;
+      this.wanderTargetTurn = wobble * (0.010 + this.data.responsiveness * 0.012);
+      this.nextWanderChangeAt = now + 1.0 + Math.abs(wobble) * 2.0;
     }
     this.angularVelocity += this.wanderTargetTurn * safeDt;
-    this.angularVelocity += Math.sin(this.phase * 0.31 + this.data.seed * 4) * 0.0085 * safeDt;
-    this.angularVelocity *= Math.pow(0.965, safeDt * 60);
+    this.angularVelocity += Math.sin(this.phase * 0.31 + this.data.seed * 4) * 0.006 * safeDt;
+    this.angularVelocity *= Math.pow(0.975, safeDt * 60);
     this.heading += this.angularVelocity * 60 * safeDt;
 
     // Pending events create a barely visible preparation. The user can notice
