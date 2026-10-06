@@ -54,3 +54,24 @@
 - The hitbox is a chain of circles sliced from the current contour (round body = 1 circle, ribbon/droplet = a chain). Squeeze from the pulse is included; spikes count at 75%.
 - `resolveCollisions` runs after all creatures update: overlap is removed from both bodies (heavier moves less), approach velocity is cancelled with a small bounce, and off-centre contact turns the body slightly. 4 iterations per frame.
 - Tap impulse and ripple force were retuned for px/s units.
+
+
+## v10.1 — light and locomotion without scheduled events
+
+Design rule: no event timers, no dice, no "A did X so B does Y after N seconds".
+Anything that looks like a signal or an intention should come out of continuous
+dynamics, so that its regularities can only be found by interpretation.
+
+**Light (creature.ts, renderer.ts)**
+- The glow is the output of a small deterministic excitable membrane (Hindmarsh-Rose, 3 variables). It produces irregular bursts of blinks separated by long quiet spans, with no scheduler and no RNG.
+- Each body has its own input current / slow-variable rate derived from its seed, so rhythms differ per body.
+- Coupling is continuous and weak: light seen from nearby bodies (falls off with distance) and the body's own squeeze add a little to the membrane's input current. Whether that matters depends on the hidden state it lands in, so call-and-response can appear but is never guaranteed.
+- The only seconds-like constant is `LIGHT.modelRate` (how fast the membrane's own time runs) and the rise/fade of the light response; both are properties of the "tissue", not event schedules.
+- Keep the input current inside the bursting window (~3.0-3.25); above it the membrane flickers continuously (`LIGHT.inputMax` guards this).
+- During a flash the core grows and the whole body lights up from inside (additive halo); between flashes the core is slightly dimmer.
+
+**Locomotion**
+- Removed the RNG from pulse timing and turning. Pulse interval now follows a slow hidden rhythm (`vigor`, incommensurate sines per body): high vigor = frequent beats, low = long glides.
+- Heading drift is a slow deterministic curve sampled per pulse, not a random walk.
+
+**Not changed yet**: `behavior.ts` (BehaviorScheduler) still uses seeded random waits and hazard rates for morphology and macro events.

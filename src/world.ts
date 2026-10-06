@@ -16,6 +16,8 @@ export interface NeighborInfluence {
   morphAge: number;
   morphIntensity: number;
   collisionRadius: number;
+  /** Current light-flash level of the other body (0..1). Geometry/brightness only. */
+  signal: number;
 }
 
 export interface RippleInfluence {
@@ -51,6 +53,7 @@ export function collectNeighbors(creatures: readonly Creature[], selfIndex: numb
       morphAge: other.getMorphAge(),
       morphIntensity: other.getMorphIntensity(),
       collisionRadius: other.getCollisionRadius(),
+      signal: other.signal,
     });
   }
   return result;

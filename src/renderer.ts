@@ -126,6 +126,7 @@ export class Renderer {
     // filament than a bright LED or energy orb. The target changes at uneven
     // intervals and is smoothly interpolated, so the light never becomes a
     // metronome.
+    const sig = creature.signal;
     const flickerClock = phase * 0.58 + creature.data.seed * 13.7;
     const flickerStep = Math.floor(flickerClock);
     const flickerT = flickerClock - flickerStep;
@@ -138,16 +139,31 @@ export class Renderer {
     const smoothFlickerT = flickerT * flickerT * (3 - 2 * flickerT);
     const flickerTarget = 0.70 + 0.18 * (flickerA * 0.65 + flickerB * 0.35);
     const nextFlickerTarget = 0.70 + 0.18 * (flickerB * 0.65 + hash(flickerStep + 2) * 0.35);
-    const flicker = flickerTarget + (nextFlickerTarget - flickerTarget) * smoothFlickerT;
+    // Between bouts the core is calm and slightly dimmer; a bout lifts it clearly.
+    const flicker = (flickerTarget + (nextFlickerTarget - flickerTarget) * smoothFlickerT) * (0.86 + sig * 0.55);
     const organicFlicker = 0.96 + 0.04 * Math.sin(phase * 2.7 + creature.data.seed * 4.1);
     const corePulse = breath * 0.9 + pulse * 0.48 + organic * 0.18;
-    const coreRadius = Math.max(2.2, (5.8 + bloom * 2.0 + corePulse * 0.7) * perspective);
+    const coreRadius = Math.max(2.2, (5.8 + bloom * 2.0 + corePulse * 0.7 + sig * 4.2) * perspective);
     const coreGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, coreRadius * 1.65);
     coreGrad.addColorStop(0, `rgba(255,255,255,${0.68 * flicker * organicFlicker * perspective})`);
     coreGrad.addColorStop(0.32, `hsla(${hue - 20}, 100%, 90%, ${(0.50 + bloom * 0.05) * flicker * perspective})`);
     coreGrad.addColorStop(0.72, `hsla(${hue}, 85%, 65%, ${0.12 * flicker * perspective})`);
     coreGrad.addColorStop(1, 'transparent');
     ctx.beginPath(); ctx.arc(0, 0, coreRadius * 1.65, 0, Math.PI * 2); ctx.fillStyle = coreGrad; ctx.fill();
+
+    // Signal flash: the whole translucent body lights up from inside, then fades.
+    if (sig > 0.02) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const haloR = baseRadius * (1.15 + sig * 0.55);
+      const halo = ctx.createRadialGradient(0, 0, 0, 0, 0, haloR);
+      halo.addColorStop(0, `hsla(${hue - 20}, 100%, 92%, ${0.55 * sig * perspective})`);
+      halo.addColorStop(0.45, `hsla(${hue}, 95%, 70%, ${0.26 * sig * perspective})`);
+      halo.addColorStop(1, 'transparent');
+      ctx.fillStyle = halo;
+      ctx.beginPath(); ctx.arc(0, 0, haloR, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
     ctx.restore();
 
     // A rare external image appears as if it is inside the creature, like

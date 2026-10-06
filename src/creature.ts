@@ -6,7 +6,6 @@ import { CreatureSound } from './sound';
 import { ResourceProvider } from './provider';
 import { DNAEngine, ConceptDNA } from './procedural';
 import type { NeighborInfluence, RippleInfluence } from './world';
-import { SeededRandom } from './random';
 import { buildColliders, computeBodyShape, createBodyShape, type Collider } from './body';
 
 /**
@@ -24,11 +23,17 @@ const LOCOMOTION = {
   dvMin: 10 * SPEED_SCALE,      // forward speed gained per pulse (px/s)
   dvMax: 16 * SPEED_SCALE,
   basePeriod: 3.4,              // seconds between pulses
-  restChance: 0.22,             // chance a pulse is followed by a long glide
   relaxTime: 1.6,               // seconds the bell takes to re-expand
   dragTauMin: 0.9,              // seconds for glide speed to decay (e-fold)
   dragTauMax: 1.7,
 };
+/**
+ * Membrane constants. `modelRate` is how fast the membrane's own time runs
+ * relative to seconds; it is a property of the "tissue", not an event schedule.
+ * The input current must stay in the bursting window (about 3.0-3.25): lower is
+ * quiet, higher turns into continuous flicker.
+ */
+const LIGHT = { modelRate: 10, gSeen: 0.05, gBody: 0.02, inputMax: 3.2, warmup: 800 };
 const WORLD = { xFrac: 0.34, xMax: 240, yFrac: 0.34, yMax: 320 };
 
 function angleDiff(target: number, from: number): number {
@@ -95,19 +100,34 @@ export class Creature {
   angularVelocity = 0;
   private preferredTurn = 1;
   private readonly behavior: BehaviorScheduler;
-  private readonly rng: SeededRandom;
+  private vigor = 0.5;   // slow hidden rhythm of how readily the body beats (0..1)
   private morphStartedAt = -Infinity;
   private lastMorphReturnCheck = -Infinity;
   private morphReturning = false;
   private morphIntensity = 0;
   private lastNeighborCheck = -Infinity;
+
+  // Light. The glow is the output of a small deterministic excitable membrane
+  // (Hindmarsh-Rose). Nothing schedules a blink, rolls a die, or reacts to a
+  // neighbour on cue: spikes and bursts emerge from the membrane's own slow
+  // dynamics and merely *look* like signals. Neighbouring light and the
+  // body's own contraction only nudge its input current continuously, so
+  // whether a nudge matters depends on the hidden state it lands in.
+  signal = 0;                 // smoothed light output 0..1, read by the renderer
+  private memX = -1.3;
+  private memY = -7;
+  private memZ = 2;
+  private readonly memInput: number;
+  private readonly memSlow: number;
+
+  // Pulse-jet state.
   private pulseT = 0;
   private pulsePeriod = 3;
   private readonly pulseContractTime: number;
   private readonly pulseDv: number;
   private readonly dragTau: number;
   private pulseKick = 1;
-  private wanderTurn = 0;   // slow random walk of turning, re-drawn per pulse
+  private wanderTurn = 0;   // slow deterministic drift of turning, sampled per pulse
   private steerTurn = 0;    // transient turning from events, decays
   private divisionRequestedAt = -Infinity;
 
@@ -129,14 +149,22 @@ export class Creature {
     // population contains noticeably smaller bodies. This lowers the
     // average body size without changing the maximum.
     this.baseScale = 0.76 + fract(data.seed * 7.31) * 0.52;
-    this.rng = new SeededRandom(data.seed + 0.7311);
+    this.memInput = 3.04 + fract(data.seed * 6.13) * 0.10;
+    this.memSlow = 0.002 + fract(data.seed * 4.71) * 0.001;
+    this.memX = -1.4 + fract(data.seed * 7.7) * 0.5;
+    this.memY = -7 + fract(data.seed * 5.3) * 3;
+    this.memZ = 2 + fract(data.seed * 3.1);
+    // Let the membrane leave its start-up transient before it is ever seen.
+    for (let i = 0; i < LIGHT.warmup / 0.02; i += 1) this.stepMembrane(this.memInput, 0.02);
     this.pulseContractTime = 0.85 + fract(data.seed * 5.1) * 0.35;
     this.pulseDv = LOCOMOTION.dvMin + fract(data.seed * 3.3) * (LOCOMOTION.dvMax - LOCOMOTION.dvMin);
     this.dragTau = LOCOMOTION.dragTauMin
       + clamp((data.inertia - 0.8) / 0.185, 0, 1) * (LOCOMOTION.dragTauMax - LOCOMOTION.dragTauMin);
     // Start at a random point of the pulse cycle so creatures never beat in unison.
-    this.pulsePeriod = LOCOMOTION.basePeriod * this.rng.range(0.85, 1.25);
-    this.pulseT = this.rng.range(0, this.pulsePeriod);
+    this.vigor = this.computeVigor();
+    this.pulsePeriod = this.nextPulsePeriod();
+    // Start at a seed-dependent point of the cycle so bodies never beat in unison.
+    this.pulseT = fract(data.seed * 13.7) * this.pulsePeriod;
     this.activeDNA = DNAEngine.synthesize(data.seed);
     this.targetDNA = { ...this.activeDNA };
     this.currentHue = this.activeDNA.hue + data.colorHueOffset;
@@ -186,6 +214,7 @@ export class Creature {
     // requiring a dedicated "social behavior" or "emotion" state.
     this.phase += safeDt * (0.18 + micro * 1.55);
     this.organicPhase += safeDt * (0.42 + this.data.baseViscosity * 0.9);
+    this.vigor = this.computeVigor();
 
     // Three time scales keep the body alive even when locomotion is quiet:
     // slow respiration, a shorter muscular pulse, and a faint irregular tension.
@@ -209,6 +238,8 @@ export class Creature {
     this.bodyPulse += (pulse - this.bodyPulse) * Math.min(1, safeDt * 3.4);
     this.bodyTension += (tension - this.bodyTension) * Math.min(1, safeDt * 2.2);
     this.bodyOrganic += (organic * 0.43 - this.bodyOrganic) * Math.min(1, safeDt * 2.0);
+    this.updateLight(safeDt, neighbors);
+
     // --- Pulse-jet locomotion ------------------------------------------------
     // The bell contracts (thrust + turning happen only here), then relaxes while
     // the body glides and slows down. Speed therefore surges and fades with the
@@ -317,6 +348,38 @@ export class Creature {
     this.refreshBody();
   }
 
+  /** One explicit-Euler step of the Hindmarsh-Rose membrane (stable at h <= 0.02). */
+  private stepMembrane(input: number, h: number): void {
+    const x = this.memX; const y = this.memY; const z = this.memZ;
+    this.memX += (y - x * x * x + 3 * x * x - z + input) * h;
+    this.memY += (1 - 5 * x * x - y) * h;
+    this.memZ += this.memSlow * (4 * (x + 1.6) - z) * h;
+  }
+
+  private updateLight(dt: number, neighbors: readonly NeighborInfluence[]): void {
+    // Continuous, weak input: light seen from nearby bodies (fades with
+    // distance) and the body's own squeeze. No delays, no thresholds, no memory
+    // of "who flashed".
+    let seen = 0;
+    for (const n of neighbors) {
+      const w = Math.max(0, 1 - n.distance / 260);
+      seen += w * w * n.signal;
+    }
+    const input = Math.min(LIGHT.inputMax,
+      this.memInput + LIGHT.gSeen * Math.min(1, seen) + LIGHT.gBody * this.swimContraction);
+
+    let remaining = dt * LIGHT.modelRate;
+    while (remaining > 1e-6) {
+      const h = Math.min(remaining, 0.02);
+      this.stepMembrane(input, h);
+      remaining -= h;
+    }
+    // Photocyte-like response: the light rises quickly and fades more slowly.
+    const raw = clamp((this.memX + 0.3) / 1.6, 0, 1);
+    const target = raw * raw * (3 - 2 * raw);
+    this.signal += (target - this.signal) * Math.min(1, dt * (target > this.signal ? 22 : 9));
+  }
+
   /** Recompute the visible contour and the hitbox from the same body state. */
   refreshBody(): void {
     computeBodyShape(this, this.shape, false);
@@ -327,13 +390,29 @@ export class Creature {
     this.mass = Math.max(200, m);
   }
 
+  /** Slow quasi-periodic rhythm (incommensurate sines), unique to each body. */
+  private computeVigor(): number {
+    const seed = this.data.seed;
+    return 0.5 + 0.5 * (0.6 * Math.sin(this.organicPhase * 0.17 + seed * 11.3)
+      + 0.4 * Math.sin(this.organicPhase * 0.071 + seed * 5.9));
+  }
+
+  /** When vigor is high the body beats readily; when low it mostly glides. */
+  private nextPulsePeriod(): number {
+    const lull = 1 - this.vigor;
+    const factor = 0.8 + 0.5 * lull + 1.6 * lull * lull * lull * lull;
+    return Math.max(LOCOMOTION.basePeriod * factor, this.pulseContractTime + 1.0);
+  }
+
   private startPulse(kick: number): void {
     this.pulseT = 0;
     this.pulseKick = kick;
+    // Heading drifts along a slow deterministic curve; there is no target.
+    const seed = this.data.seed;
     this.wanderTurn = clamp(
-      this.wanderTurn * 0.55 + this.rng.range(-1, 1) * (0.28 + this.data.responsiveness * 0.3), -0.8, 0.8);
-    let period = LOCOMOTION.basePeriod * this.rng.range(0.85, 1.25);
-    if (this.rng.chance(LOCOMOTION.restChance)) period *= this.rng.range(1.5, 2.6);
+      (0.55 * Math.sin(this.organicPhase * 0.23 + seed * 8.1) + 0.45 * Math.sin(this.organicPhase * 0.057 + seed * 3.7))
+      * (0.5 + this.data.responsiveness * 0.5), -0.8, 0.8);
+    let period = this.nextPulsePeriod();
     if (kick > 1.2) period /= 1.3;
     this.pulsePeriod = Math.max(period, this.pulseContractTime + 1.0);
   }
@@ -574,7 +653,7 @@ export class Creature {
         break;
       case 'hesitate':
         // Stop beating for a moment: the body just glides and slows.
-        this.pulsePeriod = Math.max(this.pulsePeriod, this.pulseT + this.rng.range(2.0, 3.6));
+        this.pulsePeriod = Math.max(this.pulsePeriod, this.pulseT + 2.0 + 1.6 * (1 - this.vigor));
         this.steerTurn = clamp(this.steerTurn + this.preferredTurn * 0.15, -1, 1);
         break;
       case 'burst':
