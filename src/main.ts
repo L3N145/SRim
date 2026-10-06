@@ -37,6 +37,7 @@ function deriveDefaults(base: CreatureData, index: number): CreatureData {
     responsiveness: clamp(base.responsiveness * (0.68 + seed * 0.58), 0.10, 0.80),
     inertia: clamp(base.inertia + (seed - 0.5) * 0.06, 0.80, 0.985),
     colorHueOffset: base.colorHueOffset + Math.floor((seed - 0.5) * 70),
+    morphTendency: mutateTendency(base.morphTendency, seed, 0.28),
     recentActions: [],
   };
 }
@@ -250,6 +251,7 @@ function addOffspring(parent: Creature): void {
     responsiveness: clamp(parentData.responsiveness * (0.84 + seed * 0.32), 0.10, 0.80),
     inertia: clamp(parentData.inertia + (seed - 0.5) * 0.045, 0.80, 0.985),
     colorHueOffset: parentData.colorHueOffset + Math.floor((seed - 0.5) * 28),
+    morphTendency: mutateTendency(parentData.morphTendency, seed, 0.22),
     recentActions: [],
   };
   const child = new Creature(loadCreatureData(id, childData), sound, provider);
@@ -263,6 +265,21 @@ function addOffspring(parent: Creature): void {
   child.vy = parent.vy * 0.72 + Math.sin(angle) * 0.045;
   child.vz = parent.vz * 0.72;
   creatures.push(child);
+}
+
+function mutateTendency(source: CreatureData['morphTendency'], seed: number, mutation: number): CreatureData['morphTendency'] {
+  const result = { ...source };
+  const names = Object.keys(result) as Array<keyof CreatureData['morphTendency']>;
+  names.forEach((name, i) => {
+    const noise = fract(Math.sin(seed * (31.7 + i * 7.13) + i * 11.91) * 43758.5453) * 2 - 1;
+    result[name] = clamp(result[name] * (1 + noise * mutation), 0.18, 2.8);
+  });
+  // A child usually resembles the parent, but one or two forms can drift
+  // noticeably, making morphology feel inherited rather than copied.
+  const pivot = Math.floor(fract(seed * 13.37) * names.length);
+  const pivotName = names[pivot];
+  result[pivotName] = clamp(result[pivotName] * (1.12 + fract(seed * 17.1) * 0.45), 0.18, 2.8);
+  return result;
 }
 
 function fract(value: number): number { return value - Math.floor(value); }

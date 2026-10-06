@@ -18,6 +18,7 @@ export class BehaviorScheduler {
             activity: clamp(profile.activity, 0.08, 1),
             responsiveness: clamp(profile.responsiveness, 0.05, 1),
             inertia: clamp(profile.inertia, 0.7, 0.99),
+            morphTendency: { ...profile.morphTendency },
         };
         this.quietTime = this.rng.range(5, 20);
         this.readiness = this.rng.range(0.08, 0.24);
@@ -42,9 +43,10 @@ export class BehaviorScheduler {
             this.quietTime = 0;
             this.readiness = this.rng.range(0.04, 0.12);
         }
-        const minimumQuiet = lateNight ? 18 : 12;
+        const minimumQuiet = lateNight ? 12 : 8;
         if (!this.pending && this.quietTime >= minimumQuiet) {
-            const hazard = 0.0035 + Math.pow(this.readiness, 1.65) * 0.029;
+            // Macro events are uncommon, but should still occur during a short glance.
+            const hazard = 0.006 + Math.pow(this.readiness, 1.35) * 0.055;
             if (this.rng.chance(1 - Math.exp(-hazard * safeDt)))
                 this.scheduleAutonomous(now);
         }
@@ -62,7 +64,7 @@ export class BehaviorScheduler {
         this.pending = {
             dueAt: now + this.rng.range(dramatic ? 0.06 : 0.25, dramatic ? 0.70 : 1.8),
             source: 'audio',
-            action: this.rng.weighted([
+            action: this.weightedWithMorphTendency([
                 { item: 'burst', weight: dramatic ? 22 : 9 },
                 { item: 'retreat', weight: 14 },
                 { item: 'seek', weight: 10 },
@@ -97,7 +99,7 @@ export class BehaviorScheduler {
         this.pending = {
             dueAt: now + this.rng.range(1.2, dramatic ? 4.2 : 5.8),
             source: 'interaction',
-            action: this.rng.weighted([
+            action: this.weightedWithMorphTendency([
                 { item: 'drift', weight: 18 },
                 { item: 'hesitate', weight: 14 },
                 { item: 'deform', weight: 6 },
@@ -124,7 +126,7 @@ export class BehaviorScheduler {
         this.pending = {
             dueAt: now + this.rng.range(0.12, dramatic ? 1.1 : 2.2),
             source: 'interaction',
-            action: this.rng.weighted([
+            action: this.weightedWithMorphTendency([
                 { item: 'hesitate', weight: 14 },
                 { item: 'drift', weight: 14 },
                 { item: 'retreat', weight: 9 },
@@ -138,26 +140,26 @@ export class BehaviorScheduler {
         };
     }
     requestTouch(now) {
-        if (now - this.lastTouchAt < 1.2 || this.pending)
+        if (now - this.lastTouchAt < 0.75 || this.pending)
             return;
         this.lastTouchAt = now;
         // A nearby tap always has some chance of being noticed. The stronger
         // reactions remain rare, so the gesture feels alive without becoming a UI command.
-        if (!this.rng.chance(0.48 + this.profile.responsiveness * 0.32))
+        if (!this.rng.chance(0.58 + this.profile.responsiveness * 0.32))
             return;
-        const dramatic = this.rng.chance(0.22 + this.profile.responsiveness * 0.18);
+        const dramatic = this.rng.chance(0.28 + this.profile.responsiveness * 0.20);
         this.pending = {
             dueAt: now + this.rng.range(dramatic ? 0.25 : 0.45, dramatic ? 1.35 : 2.8),
             source: 'touch',
-            action: this.rng.weighted([
+            action: this.weightedWithMorphTendency([
                 { item: 'hesitate', weight: 16 },
                 { item: 'retreat', weight: 15 },
                 { item: 'drift', weight: 15 },
                 { item: 'compact', weight: 9 },
-                { item: 'bloom', weight: dramatic ? 10 : 6 },
-                { item: 'deform', weight: dramatic ? 10 : 6 },
-                { item: 'burst', weight: dramatic ? 9 : 3 },
-                { item: 'giant', weight: dramatic ? 1.5 : 0.2 },
+                { item: 'bloom', weight: dramatic ? 14 : 8 },
+                { item: 'deform', weight: dramatic ? 12 : 7 },
+                { item: 'burst', weight: dramatic ? 11 : 4 },
+                { item: 'giant', weight: dramatic ? 3.0 : 0.45 },
             ]),
             anticipation: dramatic ? this.rng.range(0.45, 0.9) : this.rng.range(0.2, 0.7),
         };
@@ -171,14 +173,24 @@ export class BehaviorScheduler {
     }
     getMicroActivity() {
         const breathing = 0.5 + 0.5 * Math.sin(this.microPhase);
-        return clamp(0.030 + this.profile.activity * 0.06 + breathing * 0.02);
+        return clamp(0.045 + this.profile.activity * 0.075 + breathing * 0.028);
     }
     getReadiness() { return this.readiness; }
     getAnticipation() { return this.anticipation; }
+    weightedWithMorphTendency(items) {
+        for (const entry of items) {
+            const morph = morphologyForAction(entry.item);
+            if (morph) {
+                const tendency = clamp(this.profile.morphTendency[morph] ?? 1, 0.18, 2.8);
+                entry.weight *= tendency;
+            }
+        }
+        return this.rng.weighted(items);
+    }
     scheduleAutonomous(now) {
         const conspicuous = this.rng.weighted([
-            { item: false, weight: 46 },
-            { item: true, weight: 54 },
+            { item: false, weight: 38 },
+            { item: true, weight: 62 },
         ]);
         const pool = conspicuous
             ? [
@@ -188,8 +200,8 @@ export class BehaviorScheduler {
                 { item: 'orbit', weight: 6 }, { item: 'retreat', weight: 7 },
                 { item: 'approach', weight: 7 }, { item: 'bloom', weight: 10 },
                 { item: 'vortex', weight: 5 }, { item: 'ribbon', weight: 5 },
-                { item: 'crystalline', weight: 4 }, { item: 'mitosis', weight: 2 },
-                { item: 'giant', weight: 2 },
+                { item: 'crystalline', weight: 4 }, { item: 'birth', weight: 1.2 },
+                { item: 'giant', weight: 4 },
             ]
             : [
                 { item: 'drift', weight: 27 }, { item: 'breathe', weight: 25 },
@@ -197,12 +209,17 @@ export class BehaviorScheduler {
                 { item: 'retreat', weight: 8 }, { item: 'compact', weight: 7 },
                 { item: 'deform', weight: 6 }, { item: 'idle', weight: 5 },
             ];
-        // Recent morphs become less likely, not impossible. This produces
-        // individual variation without a visible cooldown list.
+        // Morphology is not chosen from one global probability table. Each
+        // individual has a persistent bodily tendency toward some forms and
+        // away from others. Recent repetition only weakens that tendency a bit;
+        // it never forces variety. This makes a creature's morphology feel like
+        // a trait rather than a random animation playlist.
         for (const entry of pool) {
-            if (isMorphAction(entry.item)) {
-                const recency = this.recentMorphs.reduce((score, action, index) => action === entry.item ? score + (index + 1) / this.recentMorphs.length : score, 0);
-                entry.weight *= Math.max(0.28, 1 - recency * 0.16);
+            const morph = morphologyForAction(entry.item);
+            if (morph) {
+                const tendency = clamp(this.profile.morphTendency[morph] ?? 1, 0.18, 2.8);
+                const recency = this.recentMorphs.reduce((score, action, index) => action === morph ? score + (index + 1) / this.recentMorphs.length : score, 0);
+                entry.weight *= tendency * Math.max(0.62, 1 - recency * 0.10);
             }
         }
         const action = this.rng.weighted(pool);
@@ -217,10 +234,21 @@ export class BehaviorScheduler {
         };
     }
 }
+function morphologyForAction(action) {
+    if (isMorphAction(action))
+        return action === 'normal' ? null : action;
+    if (action === 'expand')
+        return 'bloom';
+    if (action === 'contract')
+        return 'compact';
+    if (action === 'deform')
+        return 'droplet';
+    return null;
+}
 function isMorphAction(action) {
     return action === 'normal' || action === 'spiky' || action === 'bloom' || action === 'compact'
         || action === 'droplet' || action === 'crystalline' || action === 'ribbon'
-        || action === 'mitosis' || action === 'vortex' || action === 'giant';
+        || action === 'vortex' || action === 'giant';
 }
 function clamp(value, min = 0, max = 1) {
     return Math.max(min, Math.min(max, value));

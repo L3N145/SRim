@@ -20,6 +20,7 @@ export function loadCreatureData(instanceId = '0', defaults) {
         inertia: clamp(finiteOr(source?.inertia, 0.90 + pseudo(3) * 0.055), 0.80, 0.985),
         baseFrequency: clamp(finiteOr(source?.baseFrequency, 200 + pseudo(4) * 120), 120, 420),
         colorHueOffset: clamp(finiteOr(source?.colorHueOffset, Math.floor(pseudo(5) * 60) - 30), -60, 60),
+        morphTendency: normalizeMorphTendency(source?.morphTendency, seed),
         recentActions: normalizeActions(source?.recentActions),
         instanceId,
     };
@@ -102,4 +103,19 @@ function isFiniteNumber(value) {
 }
 function clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
+}
+function normalizeMorphTendency(value, seed) {
+    const names = ['spiky', 'bloom', 'compact', 'droplet', 'crystalline', 'ribbon', 'vortex', 'giant'];
+    const obj = value && typeof value === 'object' ? value : null;
+    const result = {};
+    names.forEach((name, i) => {
+        const fallback = 0.55 + seededValue(seed, 30 + i) * 0.9;
+        const raw = obj && typeof obj[name] === 'number' && Number.isFinite(obj[name]) ? obj[name] : fallback;
+        result[name] = clamp(raw, 0.18, 2.8);
+    });
+    return result;
+}
+function seededValue(seed, salt) {
+    const x = Math.sin(seed * 127.1 + salt * 311.7) * 43758.5453;
+    return x - Math.floor(x);
 }

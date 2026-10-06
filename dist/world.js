@@ -29,18 +29,21 @@ export function collectNeighbors(creatures, selfIndex) {
     }
     return result;
 }
-export function collectRippleInfluences(ripples, x, y) {
+export function collectRippleInfluences(ripples, x, y, z = 0) {
     const result = [];
     for (const ripple of ripples) {
-        const dx = x - ripple.x;
-        const dy = y - ripple.y;
+        const perspective = 380 / (380 + z);
+        const projectedX = x * perspective;
+        const projectedY = y * perspective;
+        const dx = projectedX - ripple.x;
+        const dy = projectedY - ripple.y;
         const distance = Math.hypot(dx, dy);
         const radius = getRippleRadius(ripple);
         const ringDistance = Math.abs(distance - radius);
         // The creature reacts to the expanding ring, not to the tap point itself.
-        if (ringDistance > 34)
+        if (ringDistance > 48)
             continue;
-        const ringStrength = 1 - ringDistance / 34;
+        const ringStrength = 1 - ringDistance / 48;
         result.push({
             dx,
             dy,

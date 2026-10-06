@@ -3,6 +3,8 @@ export interface ActionLog {
   timestamp: number;
 }
 
+export type MorphTendency = Record<'spiky' | 'bloom' | 'compact' | 'droplet' | 'crystalline' | 'ribbon' | 'vortex' | 'giant', number>;
+
 export interface CreatureData {
   version: 2;
   seed: number;
@@ -17,6 +19,7 @@ export interface CreatureData {
   inertia: number;
   baseFrequency: number;
   colorHueOffset: number;
+  morphTendency: MorphTendency;
   recentActions: ActionLog[];
   instanceId?: string;
 }
@@ -45,6 +48,7 @@ export function loadCreatureData(instanceId = '0', defaults?: Partial<CreatureDa
     inertia: clamp(finiteOr(source?.inertia, 0.90 + pseudo(3) * 0.055), 0.80, 0.985),
     baseFrequency: clamp(finiteOr(source?.baseFrequency, 200 + pseudo(4) * 120), 120, 420),
     colorHueOffset: clamp(finiteOr(source?.colorHueOffset, Math.floor(pseudo(5) * 60) - 30), -60, 60),
+    morphTendency: normalizeMorphTendency(source?.morphTendency, seed),
     recentActions: normalizeActions(source?.recentActions),
     instanceId,
   };
@@ -130,4 +134,21 @@ function isFiniteNumber(value: unknown): value is number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function normalizeMorphTendency(value: unknown, seed: number): MorphTendency {
+  const names: Array<keyof MorphTendency> = ['spiky', 'bloom', 'compact', 'droplet', 'crystalline', 'ribbon', 'vortex', 'giant'];
+  const obj = value && typeof value === 'object' ? value as Record<string, unknown> : null;
+  const result = {} as MorphTendency;
+  names.forEach((name, i) => {
+    const fallback = 0.55 + seededValue(seed, 30 + i) * 0.9;
+    const raw = obj && typeof obj[name] === 'number' && Number.isFinite(obj[name]) ? obj[name] as number : fallback;
+    result[name] = clamp(raw, 0.18, 2.8);
+  });
+  return result;
+}
+
+function seededValue(seed: number, salt: number): number {
+  const x = Math.sin(seed * 127.1 + salt * 311.7) * 43758.5453;
+  return x - Math.floor(x);
 }

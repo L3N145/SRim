@@ -84,6 +84,7 @@ export class Renderer {
     const breath = creature.bodyBreath;
     const pulse = creature.bodyPulse;
     const tension = creature.bodyTension;
+    const organic = creature.bodyOrganic;
 
     ctx.save();
     ctx.translate(screenX, screenY);
@@ -104,9 +105,14 @@ export class Renderer {
       const angle = (i / numPoints) * Math.PI * 2;
       const livingWobble = fleshWobble(phase, angle, creature.data.seed);
       const contraction = breath * 1.65 + pulse * 0.72;
-      let r = baseRadius * (1 + contraction * 0.026)
-        + Math.sin(phase * 0.8 + angle * 2) * (2.0 + microWobble(phase, angle, creature.getBaseScale()) * 0.8) * (1.0 - spike)
-        + livingWobble * (0.75 + tension * 0.7) * perspective;
+      // Make the living fluctuation legible at a glance. The slow component
+      // changes the whole body, while angularly varying components make the
+      // contour itself breathe instead of merely scaling uniformly.
+      const bodyWave = organic * (0.75 + 0.28 * Math.sin(angle * 2 + phase * 0.17));
+      const visibleFlesh = livingWobble * (1.55 + tension * 1.1);
+      let r = baseRadius * (1 + contraction * 0.038 + bodyWave * 0.016)
+        + Math.sin(phase * 0.8 + angle * 2) * (2.4 + microWobble(phase, angle, creature.getBaseScale()) * 1.0) * (1.0 - spike)
+        + visibleFlesh * perspective;
       if (spike > 0.01) {
         const spikeWave = Math.pow(Math.abs(Math.sin(angle * (spikeFreq / 2) + phase * 0.2)), 3.0);
         r += spikeWave * (22 * spike * perspective);
@@ -151,7 +157,7 @@ export class Renderer {
     ctx.lineWidth = 1.0 + spike * 0.8 + cryst * 0.5;
     ctx.stroke();
 
-    const corePulse = breath * 1.6 + pulse * 0.9 + Math.sin(phase * 0.6) * 0.45;
+    const corePulse = breath * 1.9 + pulse * 1.1 + organic * 0.48 + Math.sin(phase * 0.6) * 0.45;
     const coreRadius = Math.max(3, (7.5 + bloom * 4.0 + corePulse) * perspective);
     const coreGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, coreRadius * 1.8);
     coreGrad.addColorStop(0, '#ffffff');

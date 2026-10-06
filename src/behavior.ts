@@ -22,6 +22,7 @@ export interface BehaviorProfile {
   activity: number;
   responsiveness: number;
   inertia: number;
+  morphTendency: Record<string, number>;
 }
 
 interface PendingEvent {
@@ -51,6 +52,7 @@ export class BehaviorScheduler {
       activity: clamp(profile.activity, 0.08, 1),
       responsiveness: clamp(profile.responsiveness, 0.05, 1),
       inertia: clamp(profile.inertia, 0.7, 0.99),
+      morphTendency: { ...profile.morphTendency },
     };
     this.quietTime = this.rng.range(5, 20);
     this.readiness = this.rng.range(0.08, 0.24);
@@ -97,7 +99,7 @@ export class BehaviorScheduler {
     this.pending = {
       dueAt: now + this.rng.range(dramatic ? 0.06 : 0.25, dramatic ? 0.70 : 1.8),
       source: 'audio',
-      action: this.rng.weighted([
+      action: this.weightedWithMorphTendency([
         { item: 'burst' as const, weight: dramatic ? 22 : 9 },
         { item: 'retreat' as const, weight: 14 },
         { item: 'seek' as const, weight: 10 },
@@ -131,7 +133,7 @@ export class BehaviorScheduler {
     this.pending = {
       dueAt: now + this.rng.range(1.2, dramatic ? 4.2 : 5.8),
       source: 'interaction',
-      action: this.rng.weighted([
+      action: this.weightedWithMorphTendency([
         { item: 'drift' as const, weight: 18 },
         { item: 'hesitate' as const, weight: 14 },
         { item: 'deform' as const, weight: 6 },
@@ -157,7 +159,7 @@ export class BehaviorScheduler {
     this.pending = {
       dueAt: now + this.rng.range(0.12, dramatic ? 1.1 : 2.2),
       source: 'interaction',
-      action: this.rng.weighted([
+      action: this.weightedWithMorphTendency([
         { item: 'hesitate' as const, weight: 14 },
         { item: 'drift' as const, weight: 14 },
         { item: 'retreat' as const, weight: 9 },
@@ -181,7 +183,7 @@ export class BehaviorScheduler {
     this.pending = {
       dueAt: now + this.rng.range(dramatic ? 0.25 : 0.45, dramatic ? 1.35 : 2.8),
       source: 'touch',
-      action: this.rng.weighted([
+      action: this.weightedWithMorphTendency([
         { item: 'hesitate' as const, weight: 16 },
         { item: 'retreat' as const, weight: 15 },
         { item: 'drift' as const, weight: 15 },
@@ -209,6 +211,17 @@ export class BehaviorScheduler {
   getReadiness(): number { return this.readiness; }
   getAnticipation(): number { return this.anticipation; }
 
+  private weightedWithMorphTendency(items: Array<{ item: BehaviorAction; weight: number }>): BehaviorAction {
+    for (const entry of items) {
+      const morph = morphologyForAction(entry.item);
+      if (morph) {
+        const tendency = clamp(this.profile.morphTendency[morph] ?? 1, 0.18, 2.8);
+        entry.weight *= tendency;
+      }
+    }
+    return this.rng.weighted(items);
+  }
+
   private scheduleAutonomous(now: number): void {
     const conspicuous = this.rng.weighted([
       { item: false, weight: 38 },
@@ -232,13 +245,18 @@ export class BehaviorScheduler {
           { item: 'deform', weight: 6 }, { item: 'idle', weight: 5 },
         ];
 
-    // Recent morphs become less likely, not impossible. This produces
-    // individual variation without a visible cooldown list.
+    // Morphology is not chosen from one global probability table. Each
+    // individual has a persistent bodily tendency toward some forms and
+    // away from others. Recent repetition only weakens that tendency a bit;
+    // it never forces variety. This makes a creature's morphology feel like
+    // a trait rather than a random animation playlist.
     for (const entry of pool) {
-      if (isMorphAction(entry.item)) {
+      const morph = morphologyForAction(entry.item);
+      if (morph) {
+        const tendency = clamp(this.profile.morphTendency[morph] ?? 1, 0.18, 2.8);
         const recency = this.recentMorphs.reduce((score, action, index) =>
-          action === entry.item ? score + (index + 1) / this.recentMorphs.length : score, 0);
-        entry.weight *= Math.max(0.28, 1 - recency * 0.16);
+          action === morph ? score + (index + 1) / this.recentMorphs.length : score, 0);
+        entry.weight *= tendency * Math.max(0.62, 1 - recency * 0.10);
       }
     }
 
@@ -253,6 +271,14 @@ export class BehaviorScheduler {
       anticipation: this.anticipation,
     };
   }
+}
+
+function morphologyForAction(action: string): MorphAction | null {
+  if (isMorphAction(action)) return action === 'normal' ? null : action;
+  if (action === 'expand') return 'bloom';
+  if (action === 'contract') return 'compact';
+  if (action === 'deform') return 'droplet';
+  return null;
 }
 
 function isMorphAction(action: string): action is MorphAction {

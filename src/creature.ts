@@ -41,6 +41,11 @@ export class Creature {
   bodyBreath = 0;
   bodyPulse = 0;
   bodyTension = 0;
+  // Correlated multi-scale fluctuation used for visible bodily liveliness.
+  // This is intentionally not a mathematically exact 1/f process; it is a
+  // lightweight pink-noise-like approximation made from several time scales.
+  bodyOrganic = 0;
+  private organicPhase = 0;
 
   // Kinematic state is intentionally semantic-free.
   heading = 0;
@@ -68,6 +73,7 @@ export class Creature {
       activity: data.baseViscosity * 18 * lateNightBias + 0.18,
       responsiveness: data.responsiveness,
       inertia: data.inertia,
+      morphTendency: data.morphTendency,
     }, data.recentActions.map((entry) => entry.action));
     this.phase = data.seed * 100;
     this.heading = ((data.seed * 17.17) % (Math.PI * 2));
@@ -121,6 +127,7 @@ export class Creature {
     // rise, fall, pause, and resume. This keeps the motion organic without
     // requiring a dedicated "social behavior" or "emotion" state.
     this.phase += safeDt * (0.18 + micro * 1.55);
+    this.organicPhase += safeDt * (0.42 + this.data.baseViscosity * 0.9);
 
     // Three time scales keep the body alive even when locomotion is quiet:
     // slow respiration, a shorter muscular pulse, and a faint irregular tension.
@@ -130,9 +137,20 @@ export class Creature {
     const breathing = Math.sin(breathPhase) * 0.62 + Math.sin(breathPhase * 0.47 + 1.7) * 0.22;
     const pulse = Math.sin(pulsePhase) * 0.5 + Math.sin(pulsePhase * 1.73 + 0.9) * 0.16;
     const tension = Math.sin(tensionPhase) * 0.5 + Math.sin(tensionPhase * 0.61 + 2.2) * 0.35;
+    // Several frequencies with decreasing amplitude give a perceptually
+    // pink-noise-like rhythm: slow body drift dominates, but faster
+    // fluctuations remain visible. The phases are irrationally related so
+    // the result does not settle into an obvious repeating loop.
+    const organic =
+      Math.sin(this.organicPhase * 0.31 + this.data.seed * 13.1) * 0.92 +
+      Math.sin(this.organicPhase * 0.73 + this.data.seed * 7.7) * 0.58 +
+      Math.sin(this.organicPhase * 1.61 + this.data.seed * 19.3) * 0.36 +
+      Math.sin(this.organicPhase * 3.37 + this.data.seed * 4.9) * 0.22 +
+      Math.sin(this.organicPhase * 7.11 + this.data.seed * 23.7) * 0.13;
     this.bodyBreath += (breathing - this.bodyBreath) * Math.min(1, safeDt * 1.8);
     this.bodyPulse += (pulse - this.bodyPulse) * Math.min(1, safeDt * 3.4);
     this.bodyTension += (tension - this.bodyTension) * Math.min(1, safeDt * 2.2);
+    this.bodyOrganic += (organic * 0.43 - this.bodyOrganic) * Math.min(1, safeDt * 2.0);
     const speedRhythm = 0.5 + 0.5 * Math.sin(this.phase * 0.19 + this.data.seed * 5.1);
     const naturalTarget = 0.115 + micro * 0.22 + speedRhythm * 0.055;
     this.motionSpeedTarget += (naturalTarget - this.motionSpeedTarget) * Math.min(1, safeDt * 0.8);

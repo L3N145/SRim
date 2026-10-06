@@ -8,3 +8,11 @@
 - Population is guarded only for visual density on small screens; the guard is not a compute constraint.
 - TILT input has been removed.
 - SRim is the project name; do not expand it as Stimulation/Reaction or imply an S-R relationship.
+
+## v5 morphology tendencies
+- Morphology is now individual-specific rather than one shared probability table.
+- Each creature persists a tendency value for each morphology (0.18–2.8 multiplier).
+- Recent repetition only weakly suppresses the same form; it does not force variety.
+- Touch/audio/neighbor/autonomous morphology selection all respect the individual tendency.
+- Offspring inherit the parent's morphology tendencies with small mutation, so family resemblance can emerge without explicit social semantics.
+- Existing saved creatures receive deterministic tendencies from their seed when no tendency data exists.

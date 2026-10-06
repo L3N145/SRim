@@ -2,7 +2,7 @@ import { BehaviorScheduler } from './behavior';
 import { recordAction } from './storage';
 import { DNAEngine } from './procedural';
 const ENABLE_CREATURE_SOUNDS = false;
-const ENABLE_ONLINE_RESOURCE_ACTIONS = false;
+const ENABLE_ONLINE_RESOURCE_ACTIONS = true;
 export class Creature {
     data;
     sound;
@@ -16,6 +16,7 @@ export class Creature {
     currentAction = 'normal';
     scale = 1.0;
     targetScale = 1.0;
+    baseScale;
     spike = 0;
     targetSpike = 0;
     bloom = 0;
@@ -26,8 +27,6 @@ export class Creature {
     targetCrystalline = 0;
     ribbon = 0;
     targetRibbon = 0;
-    mitosis = 0;
-    targetMitosis = 0;
     vortex = 0;
     targetVortex = 0;
     carriedImage = null;
@@ -40,6 +39,10 @@ export class Creature {
     phase = 0;
     rotation = 0;
     activity = 0.04;
+    // Multi-scale bodily motion: these are physical oscillators, not emotions.
+    bodyBreath = 0;
+    bodyPulse = 0;
+    bodyTension = 0;
     // Kinematic state is intentionally semantic-free.
     heading = 0;
     angularVelocity = 0;
@@ -53,7 +56,9 @@ export class Creature {
     lastNeighborCheck = -Infinity;
     motionSpeed = 0.075;
     motionSpeedTarget = 0.075;
-    motionPauseUntil = -Infinity;
+    nextWanderChangeAt = -Infinity;
+    wanderTargetTurn = 0;
+    divisionRequestedAt = -Infinity;
     constructor(data, sound, provider) {
         this.data = data;
         this.sound = sound;
@@ -63,15 +68,18 @@ export class Creature {
             activity: data.baseViscosity * 18 * lateNightBias + 0.18,
             responsiveness: data.responsiveness,
             inertia: data.inertia,
+            morphTendency: data.morphTendency,
         }, data.recentActions.map((entry) => entry.action));
         this.phase = data.seed * 100;
         this.heading = ((data.seed * 17.17) % (Math.PI * 2));
         this.preferredTurn = data.seed > 0.5 ? 1 : -1;
+        this.baseScale = 1.0 + fract(data.seed * 7.31) * 0.28;
+        this.nextWanderChangeAt = performance.now() / 1000 + 1.5 + fract(data.seed * 5.17) * 2.5;
         this.activeDNA = DNAEngine.synthesize(data.seed);
         this.targetDNA = { ...this.activeDNA };
         this.currentHue = this.activeDNA.hue + data.colorHueOffset;
     }
-    update(dt, bounds, neighbors = [], tilt = { x: 0, y: 0 }, ripples = []) {
+    update(dt, bounds, neighbors = [], ripples = []) {
         const safeDt = Math.min(Math.max(dt, 0), 0.1);
         const now = performance.now() / 1000;
         const lateNight = this.isLateNight();
@@ -105,20 +113,35 @@ export class Creature {
         // rise, fall, pause, and resume. This keeps the motion organic without
         // requiring a dedicated "social behavior" or "emotion" state.
         this.phase += safeDt * (0.18 + micro * 1.55);
+        // Three time scales keep the body alive even when locomotion is quiet:
+        // slow respiration, a shorter muscular pulse, and a faint irregular tension.
+        const breathPhase = this.phase * (0.34 + this.data.baseViscosity * 2.1) + this.data.seed * 4.7;
+        const pulsePhase = this.phase * (1.15 + this.data.responsiveness * 0.55) + this.data.seed * 9.3;
+        const tensionPhase = this.phase * 2.7 + Math.sin(this.phase * 0.41 + this.data.seed * 3.1);
+        const breathing = Math.sin(breathPhase) * 0.62 + Math.sin(breathPhase * 0.47 + 1.7) * 0.22;
+        const pulse = Math.sin(pulsePhase) * 0.5 + Math.sin(pulsePhase * 1.73 + 0.9) * 0.16;
+        const tension = Math.sin(tensionPhase) * 0.5 + Math.sin(tensionPhase * 0.61 + 2.2) * 0.35;
+        this.bodyBreath += (breathing - this.bodyBreath) * Math.min(1, safeDt * 1.8);
+        this.bodyPulse += (pulse - this.bodyPulse) * Math.min(1, safeDt * 3.4);
+        this.bodyTension += (tension - this.bodyTension) * Math.min(1, safeDt * 2.2);
         const speedRhythm = 0.5 + 0.5 * Math.sin(this.phase * 0.19 + this.data.seed * 5.1);
-        const naturalTarget = 0.055 + micro * 0.13 + speedRhythm * 0.035;
-        if (now >= this.motionPauseUntil) {
-            this.motionSpeedTarget += (naturalTarget - this.motionSpeedTarget) * Math.min(1, safeDt * 0.8);
-        }
+        const naturalTarget = 0.115 + micro * 0.22 + speedRhythm * 0.055;
+        this.motionSpeedTarget += (naturalTarget - this.motionSpeedTarget) * Math.min(1, safeDt * 0.8);
         this.motionSpeed += (this.motionSpeedTarget - this.motionSpeed) * Math.min(1, safeDt * 1.6);
-        const wandering = 0.028 + micro * 0.13;
+        const wandering = 0.085 + micro * 0.24;
         const noiseX = Math.sin(this.phase * 0.73 + this.data.seed * 8.1);
         const noiseY = Math.cos(this.phase * 0.57 + this.data.seed * 5.7);
         this.vx += noiseX * wandering * safeDt;
         this.vy += noiseY * wandering * safeDt;
-        // Individual-specific turn bias. It is not a personality variable; it
-        // simply makes trajectories repeatably different between creatures.
-        this.angularVelocity += Math.sin(this.phase * 0.31 + this.data.seed * 4) * 0.0024 * safeDt;
+        // Ordinary locomotion has its own low-frequency direction changes,
+        // separate from bursts, hesitations, and morphology.
+        if (now >= this.nextWanderChangeAt) {
+            const wobble = Math.sin(this.phase * 1.73 + this.data.seed * 11.7);
+            this.wanderTargetTurn = wobble * (0.010 + this.data.responsiveness * 0.012);
+            this.nextWanderChangeAt = now + 1.1 + Math.abs(wobble) * 2.6;
+        }
+        this.angularVelocity += this.wanderTargetTurn * safeDt;
+        this.angularVelocity += Math.sin(this.phase * 0.31 + this.data.seed * 4) * 0.0048 * safeDt;
         this.angularVelocity *= Math.pow(0.965, safeDt * 60);
         this.heading += this.angularVelocity * 60 * safeDt;
         // Pending events create a barely visible preparation. The user can notice
@@ -140,12 +163,6 @@ export class Creature {
         const propulsion = this.motionSpeed * (0.16 + this.data.baseViscosity * 0.35);
         this.vx += forwardX * propulsion * safeDt;
         this.vy += forwardY * propulsion * safeDt;
-        // Device tilt behaves like a very soft gravity field. It is intentionally
-        // weak and inertial: tilting the phone does not directly steer a creature.
-        // Instead, the whole local world acquires a gentle preferred direction.
-        const tiltStrength = 0.045;
-        this.vx += tilt.x * tiltStrength * safeDt;
-        this.vy += tilt.y * tiltStrength * safeDt;
         if (this.burst > 0) {
             // Bursts are still noticeable, but they are deliberately capped. The
             // creature should never look like a projectile crossing the screen.
@@ -170,7 +187,7 @@ export class Creature {
         // Soft speed limit. Instead of clipping velocity abruptly, excess speed
         // is removed gradually so acceleration/deceleration remain visible.
         const speed = Math.hypot(this.vx, this.vy);
-        const maxSpeed = 0.34 + this.burst * 0.05;
+        const maxSpeed = 0.42 + this.burst * 0.06;
         if (speed > maxSpeed) {
             const damping = Math.min(1, safeDt * 2.8);
             const scale = 1 - damping * (1 - maxSpeed / speed);
@@ -183,8 +200,9 @@ export class Creature {
         this.y += this.vy * safeDt * 48;
         this.z += this.vz * safeDt * 40;
         this.rotation += (this.angularVelocity + this.vx * 0.0008) * 60 * safeDt;
-        const breath = Math.sin(this.phase * 0.72 + this.data.seed) * (0.009 + micro * 0.028);
-        const visualScaleTarget = this.targetScale * (1 + breath);
+        const bodyScale = this.bodyBreath * (0.024 + micro * 0.035) + this.bodyPulse * 0.009 + this.bodyTension * 0.006;
+        const breath = Math.sin(this.phase * 0.72 + this.data.seed) * (0.010 + micro * 0.025);
+        const visualScaleTarget = this.baseScale * this.targetScale * (1 + bodyScale + breath);
         const morphEase = this.morphReturning ? 0.28 : 1.0;
         this.scale += (visualScaleTarget - this.scale) * Math.min(1, safeDt * 2.4 * morphEase);
         this.spike += (this.targetSpike - this.spike) * Math.min(1, safeDt * 2.8 * morphEase);
@@ -192,11 +210,10 @@ export class Creature {
         this.stretch += (this.targetStretch - this.stretch) * Math.min(1, safeDt * 2.6 * morphEase);
         this.crystalline += (this.targetCrystalline - this.crystalline) * Math.min(1, safeDt * 2.6 * morphEase);
         this.ribbon += (this.targetRibbon - this.ribbon) * Math.min(1, safeDt * 2.5 * morphEase);
-        this.mitosis += (this.targetMitosis - this.mitosis) * Math.min(1, safeDt * 2.4 * morphEase);
         this.vortex += (this.targetVortex - this.vortex) * Math.min(1, safeDt * 2.4 * morphEase);
         if (this.morphReturning && this.scale < 1.015 && this.spike < 0.015 && this.bloom < 0.015
             && this.stretch < 0.015 && this.crystalline < 0.015 && this.ribbon < 0.015
-            && this.mitosis < 0.015 && this.vortex < 0.015) {
+            && this.vortex < 0.015) {
             this.morphReturning = false;
             this.morphIntensity = 0;
             this.currentAction = 'normal';
@@ -222,19 +239,17 @@ export class Creature {
             const ny = ripple.dy / distance;
             // The ring perturbs the existing trajectory rather than directly
             // controlling position. The effect is deliberately small.
-            const radial = ripple.strength * (0.010 + this.data.responsiveness * 0.009);
-            this.vx += nx * radial * dt;
-            this.vy += ny * radial * dt;
-            // A small lateral component keeps the response from looking like three
-            // identical radial explosions when several creatures are hit together.
+            const ringDistance = Math.abs(distance - ripple.radius);
+            const ringBand = Math.max(0, 1 - ringDistance / 34);
+            const radial = ripple.strength * ringBand * (0.72 + this.data.responsiveness * 0.52);
+            this.vx += nx * radial * dt * 3.2;
+            this.vy += ny * radial * dt * 3.2;
             const tangentX = -ny;
             const tangentY = nx;
-            const lateral = Math.sin(this.phase + ripple.radius * 0.035) * radial * 0.42;
-            this.vx += tangentX * lateral * dt;
-            this.vy += tangentY * lateral * dt;
-            // A strong close passage can very occasionally interrupt the scheduler,
-            // but there is no guaranteed response to every tap.
-            if (ripple.strength > 0.70 && distance < ripple.radius + 18 && this.phase % 5.7 < 0.025) {
+            const lateral = Math.sin(this.phase + ripple.radius * 0.035) * radial * 1.05;
+            this.vx += tangentX * lateral * dt * 1.7;
+            this.vy += tangentY * lateral * dt * 1.7;
+            if (ringBand > 0.45 && ripple.strength > 0.55) {
                 this.behavior.requestTouch(performance.now() / 1000);
             }
         }
@@ -284,13 +299,11 @@ export class Creature {
         img.onload = () => {
             this.carriedImage = img;
             this.imageCaption = fragment.title ?? null;
-            this.targetImageAlpha = 0.6;
-            this.targetScale = 1.18;
+            this.targetImageAlpha = 0.72;
             if (ENABLE_CREATURE_SOUNDS)
                 this.sound.emitBreath(2.6, 0.9);
             window.setTimeout(() => {
                 this.targetImageAlpha = 0;
-                this.targetScale = 1.0;
                 window.setTimeout(() => {
                     this.carriedImage = null;
                     this.imageCaption = null;
@@ -309,7 +322,6 @@ export class Creature {
         this.targetStretch = 0.0;
         this.targetCrystalline = 0.0;
         this.targetRibbon = 0.0;
-        this.targetMitosis = 0.0;
         this.targetVortex = 0.0;
         this.setMorphTargetsForAction(action);
         if (ENABLE_CREATURE_SOUNDS && action === 'bloom')
@@ -343,9 +355,6 @@ export class Creature {
                 this.targetRibbon = 0.68;
                 this.targetScale = 1.06;
                 break;
-            case 'mitosis':
-                this.targetMitosis = 0.88;
-                break;
             case 'vortex':
                 this.targetVortex = 0.70;
                 break;
@@ -360,7 +369,6 @@ export class Creature {
         this.targetStretch = 0.0;
         this.targetCrystalline = 0.0;
         this.targetRibbon = 0.0;
-        this.targetMitosis = 0.0;
         this.targetVortex = 0.0;
         // Keep a weak trace of the current morphology while the visual state
         // slowly recovers. Other creatures can still be influenced by the
@@ -376,8 +384,9 @@ export class Creature {
             currentAction: this.currentAction,
             scale: this.scale, spike: this.spike, bloom: this.bloom,
             stretch: this.stretch, crystalline: this.crystalline,
-            ribbon: this.ribbon, mitosis: this.mitosis, vortex: this.vortex,
+            ribbon: this.ribbon, vortex: this.vortex,
             currentHue: this.currentHue,
+            bodyBreath: this.bodyBreath, bodyPulse: this.bodyPulse, bodyTension: this.bodyTension,
         };
     }
     restorePersistentState(state) {
@@ -394,13 +403,15 @@ export class Creature {
         this.heading = num('heading', this.heading);
         this.rotation = num('rotation', this.rotation);
         this.currentHue = num('currentHue', this.currentHue);
+        this.bodyBreath = num('bodyBreath', this.bodyBreath);
+        this.bodyPulse = num('bodyPulse', this.bodyPulse);
+        this.bodyTension = num('bodyTension', this.bodyTension);
         this.scale = num('scale', this.scale);
         this.spike = num('spike', this.spike);
         this.bloom = num('bloom', this.bloom);
         this.stretch = num('stretch', this.stretch);
         this.crystalline = num('crystalline', this.crystalline);
         this.ribbon = num('ribbon', this.ribbon);
-        this.mitosis = num('mitosis', this.mitosis);
         this.vortex = num('vortex', this.vortex);
         const action = s.currentAction;
         if (isMorphAction(action)) {
@@ -411,19 +422,28 @@ export class Creature {
             this.setMorphTargetsForAction(this.currentAction);
         }
     }
-    handleTouch(touchNormX, touchNormY) {
-        const now = performance.now() / 1000;
-        const worldTouchX = touchNormX * 240;
-        const worldTouchY = touchNormY * 320;
-        const dx = this.x - worldTouchX;
-        const dy = this.y - worldTouchY;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < 170) {
-            const safeDist = dist + 24;
-            const impulse = Math.max(0.045, 0.075 * (1 - Math.min(dist, 170) / 170));
+    handleTouch(screenWorldX, screenWorldY) {
+        // Input is specified in the same centered screen plane used by the
+        // renderer. Project the creature into that plane first, so z-depth does
+        // not make taps appear offset from the visible body.
+        const perspective = 380 / (380 + this.z);
+        const visibleX = this.x * perspective;
+        const visibleY = this.y * perspective;
+        const dx = visibleX - screenWorldX;
+        const dy = visibleY - screenWorldY;
+        const dist = Math.hypot(dx, dy);
+        const reach = this.getCollisionRadius() + 145;
+        if (dist < reach) {
+            const safeDist = Math.max(12, dist);
+            const proximity = 1 - Math.min(dist, reach) / reach;
+            const impulse = 0.12 + proximity * 0.26;
             this.vx += (dx / safeDist) * impulse;
             this.vy += (dy / safeDist) * impulse;
-            this.behavior.requestTouch(now);
+            // A nearby disturbance also creates a tiny bodily contraction, making
+            // the physical reaction visible even before locomotion changes.
+            this.bodyPulse += proximity * 0.32;
+            this.bodyTension += proximity * 0.18;
+            this.behavior.requestTouch(performance.now() / 1000);
         }
     }
     // Kept as an optional input channel. The creature does not need a mic to
@@ -434,6 +454,7 @@ export class Creature {
         const now = performance.now() / 1000;
         this.behavior.requestAudio(now, features.level, features.flux);
     }
+    getBaseScale() { return this.baseScale; }
     getMorphIntensity() { return this.morphIntensity; }
     getMorphAge() {
         if (this.morphIntensity <= 0)
@@ -441,6 +462,14 @@ export class Creature {
         return Math.max(0, performance.now() / 1000 - this.morphStartedAt);
     }
     get behaviorReadiness() { return this.behavior.getReadiness(); }
+    consumeDivisionRequest() {
+        if (!Number.isFinite(this.divisionRequestedAt) || performance.now() / 1000 < this.divisionRequestedAt)
+            return false;
+        this.divisionRequestedAt = -Infinity;
+        this.targetScale = 1.0;
+        this.targetBloom = 0.0;
+        return true;
+    }
     executeBehaviorEvent(event, neighbors) {
         const action = event.action;
         const nearest = neighbors.reduce((best, n) => !best || n.distance < best.distance ? n : best, null);
@@ -463,10 +492,9 @@ export class Creature {
                 }
                 break;
             case 'hesitate':
-                this.vx *= 0.52;
-                this.vy *= 0.52;
-                this.motionSpeedTarget = 0.018;
-                this.motionPauseUntil = performance.now() / 1000 + 0.45 + event.anticipation * 1.1;
+                this.vx *= 0.72;
+                this.vy *= 0.72;
+                this.motionSpeedTarget = Math.max(0.075, this.motionSpeedTarget * 0.78);
                 this.angularVelocity += this.preferredTurn * 0.012;
                 break;
             case 'burst':
@@ -484,6 +512,13 @@ export class Creature {
                 break;
             case 'deform':
                 this.applyMorph('droplet');
+                break;
+            case 'birth':
+                // Birth is not a visual two-core morph. The parent temporarily
+                // swells and then becomes the source of a new independent body.
+                this.divisionRequestedAt = performance.now() / 1000 + 1.15;
+                this.targetScale = 1.14;
+                this.targetBloom = 0.28;
                 break;
             case 'rotate':
                 this.applyMorph('vortex');
@@ -520,8 +555,9 @@ export class Creature {
         return hour >= 23 || hour < 6;
     }
 }
+function fract(value) { return value - Math.floor(value); }
 function isMorphAction(action) {
     return action === 'normal' || action === 'spiky' || action === 'bloom' || action === 'compact'
         || action === 'droplet' || action === 'crystalline' || action === 'ribbon'
-        || action === 'mitosis' || action === 'vortex' || action === 'giant';
+        || action === 'vortex' || action === 'giant';
 }
