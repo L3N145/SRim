@@ -28,3 +28,10 @@
 - Recent repetition suppression is stronger but never hard-blocks a form.
 - Bloom was visually reduced slightly so it reads as a rarer swelling event rather than the default "big light" state.
 - Droplet, ribbon, vortex, crystalline, and spiky contours were strengthened so their morphology is legible at a glance.
+
+
+## v9.1 — touch ambiguity and body scale
+
+- Touch no longer schedules a behavior or morphology event. A tap only creates a physical disturbance: ripple field, local impulse, and a small transient body response.
+- Removed the touch behavior path that could choose morphologies after a short delay. This makes tap→morphology causality much harder to read.
+- Widened individual base-scale range from `1.00–1.28` to `0.76–1.28`. The maximum is unchanged, while smaller bodies are substantially more common and the population average is lower.

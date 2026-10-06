@@ -83,7 +83,10 @@ export class Creature {
     this.phase = data.seed * 100;
     this.heading = ((data.seed * 17.17) % (Math.PI * 2));
     this.preferredTurn = data.seed > 0.5 ? 1 : -1;
-    this.baseScale = 1.0 + fract(data.seed * 7.31) * 0.28;
+    // Keep the upper bound from v9, but widen the lower end so the
+    // population contains noticeably smaller bodies. This lowers the
+    // average body size without changing the maximum.
+    this.baseScale = 0.76 + fract(data.seed * 7.31) * 0.52;
     this.nextWanderChangeAt = performance.now() / 1000 + 0.9 + fract(data.seed * 5.17) * 1.8;
     this.locomotionBias = this.heading + (fract(data.seed * 3.71) - 0.5) * 0.8;
     this.activeDNA = DNAEngine.synthesize(data.seed);
@@ -312,9 +315,6 @@ export class Creature {
       this.vx += tangentX * lateral * dt * 1.7;
       this.vy += tangentY * lateral * dt * 1.7;
 
-      if (ringBand > 0.45 && ripple.strength > 0.55) {
-        this.behavior.requestTouch(performance.now() / 1000);
-      }
     }
   }
 
@@ -481,7 +481,6 @@ export class Creature {
       // the physical reaction visible even before locomotion changes.
       this.bodyPulse += proximity * 0.32;
       this.bodyTension += proximity * 0.18;
-      this.behavior.requestTouch(performance.now() / 1000);
     }
   }
 

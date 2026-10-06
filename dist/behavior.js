@@ -124,25 +124,6 @@ export class BehaviorScheduler {
             anticipation: dramatic ? this.rng.range(0.3, 0.7) : this.rng.range(0.08, 0.4),
         };
     }
-    requestTouch(now) {
-        if (now - this.lastTouchAt < 0.75 || this.pending)
-            return;
-        this.lastTouchAt = now;
-        if (!this.rng.chance(0.58 + this.profile.responsiveness * 0.32))
-            return;
-        const dramatic = this.rng.chance(0.28 + this.profile.responsiveness * 0.20);
-        this.pending = {
-            dueAt: now + this.rng.range(dramatic ? 0.25 : 0.45, dramatic ? 1.35 : 2.8),
-            source: 'touch',
-            action: this.weightedWithMorphTendency([
-                { item: 'hesitate', weight: 16 },
-                { item: 'retreat', weight: 15 },
-                { item: 'drift', weight: 15 },
-                ...this.morphChoices(dramatic ? 14 : 8),
-            ]),
-            anticipation: dramatic ? this.rng.range(0.45, 0.9) : this.rng.range(0.2, 0.7),
-        };
-    }
     noteExecutedAction(action) {
         if (!isMorphAction(action) || action === 'normal')
             return;
