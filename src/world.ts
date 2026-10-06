@@ -71,9 +71,9 @@ export function collectRippleInfluences(
     const ringDistance = Math.abs(distance - radius);
 
     // The creature reacts to the expanding ring, not to the tap point itself.
-    if (ringDistance > 34) continue;
+    if (ringDistance > 48) continue;
 
-    const ringStrength = 1 - ringDistance / 34;
+    const ringStrength = 1 - ringDistance / 48;
     result.push({
       dx,
       dy,

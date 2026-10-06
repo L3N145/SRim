@@ -1,29 +1,25 @@
 import './style.css';
 import { loadCreatureData, saveCreatureData, type CreatureData } from './storage';
-import { VoiceAnalyzer } from './audio';
+import { VoiceAnalyzer, type MicrophoneStartResult } from './audio';
 import { CreatureSound } from './sound';
 import { ResourceProvider } from './provider';
 import { Creature } from './creature';
 import { Renderer } from './renderer';
 import { collectNeighbors, collectRippleInfluences } from './world';
 import { createRipple, updateRipple, type Ripple } from './ripple';
-import { DeviceTiltSensor } from './device';
 
 interface SavedCreatureState {
   version: 1;
   savedAt: number;
   creatures: unknown[];
-  tiltPreference: boolean;
 }
 
 const WORLD_KEY = 'quiet_life_world_state_v1';
-let savedTiltPreference = false;
 const baseData = loadCreatureData('0');
 const sound = new CreatureSound();
 const provider = new ResourceProvider();
 const ripples: Ripple[] = [];
 let rippleSeed = baseData.seed * 1000;
-const tiltSensor = new DeviceTiltSensor();
 
 function deriveDefaults(base: CreatureData, index: number): CreatureData {
   if (index === 0) return base;
@@ -68,7 +64,6 @@ let saveAccumulator = 0;
 function loop(now: number) {
   const dt = Math.min((now - lastTime) / 1000, 0.1);
   lastTime = now;
-  tiltSensor.update(dt);
 
   if (isAudioActive) {
     const features = audio.analyze();
@@ -78,7 +73,7 @@ function loop(now: number) {
 
   for (let i = 0; i < creatures.length; i += 1) {
     const rippleInfluences = collectRippleInfluences(ripples, creatures[i].x, creatures[i].y);
-    creatures[i].update(dt, bounds, collectNeighbors(creatures, i), tiltSensor.value, rippleInfluences);
+    creatures[i].update(dt, bounds, collectNeighbors(creatures, i), rippleInfluences);
   }
 
   saveAccumulator += dt;
@@ -99,40 +94,6 @@ requestAnimationFrame(loop);
 const micBtn = document.getElementById('mic-button');
 const micStatusText = document.getElementById('mic-status-text');
 const controls = document.querySelector('.controls') as HTMLElement;
-
-const tiltBtn = document.createElement('button');
-tiltBtn.type = 'button';
-tiltBtn.id = 'tilt-button';
-tiltBtn.className = 'control-button';
-tiltBtn.textContent = 'TILT';
-tiltBtn.setAttribute('aria-label', 'Toggle phone tilt');
-controls?.appendChild(tiltBtn);
-renderTiltButton();
-
-tiltBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
-tiltBtn.addEventListener('click', async (e) => {
-  e.preventDefault();
-  e.stopPropagation();
-  sound.unlock();
-
-  if (tiltSensor.enabled) {
-    tiltSensor.disable();
-    savedTiltPreference = false;
-    persistWorldState();
-    renderTiltButton();
-    return;
-  }
-
-  const enabled = await tiltSensor.request();
-  if (enabled) {
-    savedTiltPreference = true;
-    persistWorldState();
-    renderTiltButton();
-  } else {
-    tiltBtn.textContent = tiltSensor.available ? 'TILT?' : 'NO TILT';
-    window.setTimeout(renderTiltButton, 1800);
-  }
-});
 
 async function toggleMic(e: Event) {
   e.preventDefault();
@@ -166,8 +127,14 @@ micBtn?.addEventListener('click', toggleMic);
 
 canvas.style.touchAction = 'none';
 
+let lastTapAt = -Infinity;
+const TAP_COOLDOWN = 0.32;
+
 window.addEventListener('pointerdown', (e) => {
   if ((e.target as HTMLElement).closest('.controls') || (e.target as HTMLElement).closest('.topbar')) return;
+  const now = performance.now() / 1000;
+  if (now - lastTapAt < TAP_COOLDOWN) return;
+  lastTapAt = now;
   sound.unlock();
   resetIdleTimer();
 
@@ -208,7 +175,6 @@ function persistWorldState() {
       version: 1,
       savedAt: Date.now(),
       creatures: creatures.map((creature) => creature.getPersistentState()),
-      tiltPreference: tiltSensor.enabled,
     };
     localStorage.setItem(WORLD_KEY, JSON.stringify(state));
     for (const creature of creatures) saveCreatureData(creature.data);
@@ -222,26 +188,18 @@ function restoreWorldState() {
     const raw = localStorage.getItem(WORLD_KEY);
     if (!raw) return;
     const state = JSON.parse(raw) as SavedCreatureState;
-    if (state?.version !== 1 || !Array.isArray(state.creatures)) return;
+    if (![1, 2].includes(state?.version) || !Array.isArray(state.creatures)) return;
     state.creatures.forEach((saved, index) => creatures[index]?.restorePersistentState(saved));
-    // Sensor permissions cannot be silently re-requested on some mobile
-    // browsers. The preference is retained, while activation remains a user gesture.
-    savedTiltPreference = Boolean(state.tiltPreference);
   } catch {
     // Ignore corrupt or unavailable persistence.
   }
 }
 
-function renderTiltButton() {
-  if (!tiltBtn) return;
-  tiltBtn.classList.toggle('active', tiltSensor.enabled);
-  tiltBtn.textContent = tiltSensor.enabled ? 'TILT ON' : (savedTiltPreference ? 'TILT*' : 'TILT');
-}
-
 function fract(value: number): number { return value - Math.floor(value); }
 function clamp(value: number, min: number, max: number): number { return Math.max(min, Math.min(max, value)); }
 
-function microphoneFailureText(result: { ok: false; reason: string }): string {
+function microphoneFailureText(result: MicrophoneStartResult): string {
+  if (result.ok !== false) return 'MIC ERROR';
   switch (result.reason) {
     case 'permission-denied': return 'MIC DENIED';
     case 'not-found': return 'NO MIC';

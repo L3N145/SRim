@@ -14,9 +14,9 @@ export function createRipple(x: number, y: number, seed: number): Ripple {
     x,
     y,
     age: 0,
-    duration: 1.25 + Math.abs(Math.sin(phase * 1.7)) * 0.45,
-    maxRadius: 90 + Math.abs(Math.sin(phase * 2.3)) * 45,
-    strength: 0.62 + Math.abs(Math.sin(phase * 3.1)) * 0.28,
+    duration: 1.45 + Math.abs(Math.sin(phase * 1.7)) * 0.55,
+    maxRadius: 125 + Math.abs(Math.sin(phase * 2.3)) * 55,
+    strength: 0.92 + Math.abs(Math.sin(phase * 3.1)) * 0.30,
     phase,
   };
 }

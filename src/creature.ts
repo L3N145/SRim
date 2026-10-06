@@ -8,7 +8,7 @@ import { DNAEngine, ConceptDNA } from './procedural';
 import type { NeighborInfluence, RippleInfluence } from './world';
 
 const ENABLE_CREATURE_SOUNDS = false;
-const ENABLE_ONLINE_RESOURCE_ACTIONS = false;
+const ENABLE_ONLINE_RESOURCE_ACTIONS = true;
 
 export class Creature {
   data: CreatureData;
@@ -19,6 +19,7 @@ export class Creature {
 
   currentAction: MorphAction = 'normal';
   scale = 1.0; targetScale = 1.0;
+  readonly baseScale: number;
   spike = 0; targetSpike = 0;
   bloom = 0; targetBloom = 0;
   stretch = 0; targetStretch = 0;
@@ -51,6 +52,8 @@ export class Creature {
   private motionSpeed = 0.075;
   private motionSpeedTarget = 0.075;
   private motionPauseUntil = -Infinity;
+  private nextWanderChangeAt = -Infinity;
+  private wanderTargetTurn = 0;
 
   constructor(data: CreatureData, sound: CreatureSound, provider: ResourceProvider) {
     this.data = data;
@@ -65,6 +68,8 @@ export class Creature {
     this.phase = data.seed * 100;
     this.heading = ((data.seed * 17.17) % (Math.PI * 2));
     this.preferredTurn = data.seed > 0.5 ? 1 : -1;
+    this.baseScale = 1.0 + fract(data.seed * 7.31) * 0.28;
+    this.nextWanderChangeAt = performance.now() / 1000 + 1.5 + fract(data.seed * 5.17) * 2.5;
     this.activeDNA = DNAEngine.synthesize(data.seed);
     this.targetDNA = { ...this.activeDNA };
     this.currentHue = this.activeDNA.hue + data.colorHueOffset;
@@ -74,7 +79,6 @@ export class Creature {
     dt: number,
     bounds: { width: number; height: number },
     neighbors: readonly NeighborInfluence[] = [],
-    tilt: { x: number; y: number } = { x: 0, y: 0 },
     ripples: readonly RippleInfluence[] = [],
   ) {
     const safeDt = Math.min(Math.max(dt, 0), 0.1);
@@ -114,21 +118,27 @@ export class Creature {
     // requiring a dedicated "social behavior" or "emotion" state.
     this.phase += safeDt * (0.18 + micro * 1.55);
     const speedRhythm = 0.5 + 0.5 * Math.sin(this.phase * 0.19 + this.data.seed * 5.1);
-    const naturalTarget = 0.055 + micro * 0.13 + speedRhythm * 0.035;
+    const naturalTarget = 0.085 + micro * 0.17 + speedRhythm * 0.045;
     if (now >= this.motionPauseUntil) {
       this.motionSpeedTarget += (naturalTarget - this.motionSpeedTarget) * Math.min(1, safeDt * 0.8);
     }
     this.motionSpeed += (this.motionSpeedTarget - this.motionSpeed) * Math.min(1, safeDt * 1.6);
 
-    const wandering = 0.028 + micro * 0.13;
+    const wandering = 0.040 + micro * 0.16;
     const noiseX = Math.sin(this.phase * 0.73 + this.data.seed * 8.1);
     const noiseY = Math.cos(this.phase * 0.57 + this.data.seed * 5.7);
     this.vx += noiseX * wandering * safeDt;
     this.vy += noiseY * wandering * safeDt;
 
-    // Individual-specific turn bias. It is not a personality variable; it
-    // simply makes trajectories repeatably different between creatures.
-    this.angularVelocity += Math.sin(this.phase * 0.31 + this.data.seed * 4) * 0.0024 * safeDt;
+    // Ordinary locomotion has its own low-frequency direction changes,
+    // separate from bursts, hesitations, and morphology.
+    if (now >= this.nextWanderChangeAt) {
+      const wobble = Math.sin(this.phase * 1.73 + this.data.seed * 11.7);
+      this.wanderTargetTurn = wobble * (0.010 + this.data.responsiveness * 0.012);
+      this.nextWanderChangeAt = now + 2.2 + Math.abs(wobble) * 3.8;
+    }
+    this.angularVelocity += this.wanderTargetTurn * safeDt;
+    this.angularVelocity += Math.sin(this.phase * 0.31 + this.data.seed * 4) * 0.0034 * safeDt;
     this.angularVelocity *= Math.pow(0.965, safeDt * 60);
     this.heading += this.angularVelocity * 60 * safeDt;
 
@@ -155,13 +165,6 @@ export class Creature {
     this.vx += forwardX * propulsion * safeDt;
     this.vy += forwardY * propulsion * safeDt;
 
-    // Device tilt behaves like a very soft gravity field. It is intentionally
-    // weak and inertial: tilting the phone does not directly steer a creature.
-    // Instead, the whole local world acquires a gentle preferred direction.
-    const tiltStrength = 0.045;
-    this.vx += tilt.x * tiltStrength * safeDt;
-    this.vy += tilt.y * tiltStrength * safeDt;
-
     if (this.burst > 0) {
       // Bursts are still noticeable, but they are deliberately capped. The
       // creature should never look like a projectile crossing the screen.
@@ -186,7 +189,7 @@ export class Creature {
     // Soft speed limit. Instead of clipping velocity abruptly, excess speed
     // is removed gradually so acceleration/deceleration remain visible.
     const speed = Math.hypot(this.vx, this.vy);
-    const maxSpeed = 0.34 + this.burst * 0.05;
+    const maxSpeed = 0.42 + this.burst * 0.06;
     if (speed > maxSpeed) {
       const damping = Math.min(1, safeDt * 2.8);
       const scale = 1 - damping * (1 - maxSpeed / speed);
@@ -201,8 +204,8 @@ export class Creature {
     this.z += this.vz * safeDt * 40;
     this.rotation += (this.angularVelocity + this.vx * 0.0008) * 60 * safeDt;
 
-    const breath = Math.sin(this.phase * 0.72 + this.data.seed) * (0.009 + micro * 0.028);
-    const visualScaleTarget = this.targetScale * (1 + breath);
+    const breath = Math.sin(this.phase * 0.72 + this.data.seed) * (0.014 + micro * 0.040);
+    const visualScaleTarget = this.baseScale * this.targetScale * (1 + breath);
     const morphEase = this.morphReturning ? 0.28 : 1.0;
     this.scale += (visualScaleTarget - this.scale) * Math.min(1, safeDt * 2.4 * morphEase);
     this.spike += (this.targetSpike - this.spike) * Math.min(1, safeDt * 2.8 * morphEase);
@@ -243,7 +246,7 @@ export class Creature {
 
       // The ring perturbs the existing trajectory rather than directly
       // controlling position. The effect is deliberately small.
-      const radial = ripple.strength * (0.010 + this.data.responsiveness * 0.009);
+      const radial = ripple.strength * (0.070 + this.data.responsiveness * 0.060);
       this.vx += nx * radial * dt;
       this.vy += ny * radial * dt;
 
@@ -251,13 +254,13 @@ export class Creature {
       // identical radial explosions when several creatures are hit together.
       const tangentX = -ny;
       const tangentY = nx;
-      const lateral = Math.sin(this.phase + ripple.radius * 0.035) * radial * 0.42;
+      const lateral = Math.sin(this.phase + ripple.radius * 0.035) * radial * 0.55;
       this.vx += tangentX * lateral * dt;
       this.vy += tangentY * lateral * dt;
 
       // A strong close passage can very occasionally interrupt the scheduler,
       // but there is no guaranteed response to every tap.
-      if (ripple.strength > 0.70 && distance < ripple.radius + 18 && this.phase % 5.7 < 0.025) {
+      if (ripple.strength > 0.75 && distance < ripple.radius + 22 && this.phase % 3.8 < 0.05) {
         this.behavior.requestTouch(performance.now() / 1000);
       }
     }
@@ -430,6 +433,7 @@ export class Creature {
     this.behavior.requestAudio(now, features.level, features.flux);
   }
 
+  getBaseScale(): number { return this.baseScale; }
   getMorphIntensity(): number { return this.morphIntensity; }
   getMorphAge(): number {
     if (this.morphIntensity <= 0) return Infinity;
@@ -461,8 +465,8 @@ export class Creature {
       case 'hesitate':
         this.vx *= 0.52;
         this.vy *= 0.52;
-        this.motionSpeedTarget = 0.018;
-        this.motionPauseUntil = performance.now() / 1000 + 0.45 + event.anticipation * 1.1;
+        this.motionSpeedTarget = Math.max(0.055, this.motionSpeedTarget * 0.62);
+        this.motionPauseUntil = performance.now() / 1000 + 0.25 + event.anticipation * 0.55;
         this.angularVelocity += this.preferredTurn * 0.012;
         break;
       case 'burst':
@@ -508,6 +512,8 @@ export class Creature {
     return hour >= 23 || hour < 6;
   }
 }
+
+function fract(value: number): number { return value - Math.floor(value); }
 
 function isMorphAction(action: BehaviorAction): action is MorphAction {
   return action === 'normal' || action === 'spiky' || action === 'bloom' || action === 'compact'

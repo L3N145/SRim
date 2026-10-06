@@ -2,6 +2,10 @@ import { Creature } from './creature';
 import type { Ripple } from './ripple';
 import { getRippleOpacity, getRippleRadius } from './ripple';
 
+function microWobble(phase: number, angle: number, scale: number): number {
+  return (0.5 + 0.5 * Math.sin(phase * 1.7 + angle * 3.0 + scale * 5.0));
+}
+
 export class Renderer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -90,7 +94,7 @@ export class Renderer {
     const spikeFreq = creature.targetDNA.spikeCount;
     for (let i = 0; i < numPoints; i += 1) {
       const angle = (i / numPoints) * Math.PI * 2;
-      let r = baseRadius + Math.sin(phase * 0.8 + angle * 2) * (1.5 * (1.0 - spike));
+      let r = baseRadius + Math.sin(phase * 0.8 + angle * 2) * (2.2 + microWobble(phase, angle, creature.getBaseScale()) * 0.9) * (1.0 - spike);
       if (spike > 0.01) {
         const spikeWave = Math.pow(Math.abs(Math.sin(angle * (spikeFreq / 2) + phase * 0.2)), 3.0);
         r += spikeWave * (22 * spike * perspective);
@@ -131,14 +135,6 @@ export class Renderer {
     bodyGrad.addColorStop(1, 'transparent');
     ctx.fillStyle = bodyGrad; ctx.fill();
 
-    if (creature.carriedImage && creature.imageAlpha > 0.01) {
-      ctx.save();
-      const imgSize = baseRadius * 1.35;
-      ctx.beginPath(); ctx.arc(0, 0, imgSize * 0.5, 0, Math.PI * 2); ctx.clip();
-      ctx.globalAlpha = creature.imageAlpha * perspective;
-      ctx.drawImage(creature.carriedImage, -imgSize * 0.5, -imgSize * 0.5, imgSize, imgSize);
-      ctx.restore();
-    }
     ctx.strokeStyle = `hsla(${hue - 5}, 95%, 90%, ${(0.3 + spike * 0.4 + cryst * 0.3) * perspective})`;
     ctx.lineWidth = 1.0 + spike * 0.8 + cryst * 0.5;
     ctx.stroke();
@@ -166,5 +162,37 @@ export class Renderer {
       ctx.beginPath(); ctx.arc(0, 0, coreRadius * 1.8, 0, Math.PI * 2); ctx.fillStyle = coreGrad; ctx.fill();
     }
     ctx.restore();
+
+    // Resource fragments are presented as a readable floating card rather
+    // than being trapped inside the tiny body. This keeps the creature itself
+    // abstract while making a rare Wikipedia fragment legible on phones.
+    if (creature.carriedImage && creature.imageAlpha > 0.01) {
+      const cardWidth = Math.min(132, Math.max(104, width * 0.30));
+      const imageSize = cardWidth - 16;
+      const cardHeight = imageSize + 34;
+      const cardX = Math.max(8, Math.min(width - cardWidth - 8, screenX + baseRadius + 10));
+      const cardY = Math.max(8, Math.min(height - cardHeight - 8, screenY - cardHeight - baseRadius - 8));
+      ctx.save();
+      ctx.globalAlpha = creature.imageAlpha * 0.92;
+      ctx.fillStyle = 'rgba(8, 12, 20, 0.88)';
+      ctx.strokeStyle = 'rgba(220, 235, 255, 0.24)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(cardX, cardY, cardWidth, cardHeight, 10);
+      ctx.fill();
+      ctx.stroke();
+      ctx.globalAlpha = creature.imageAlpha;
+      ctx.drawImage(creature.carriedImage, cardX + 8, cardY + 8, imageSize, imageSize);
+      if (creature.imageCaption) {
+        ctx.globalAlpha = creature.imageAlpha * 0.9;
+        ctx.fillStyle = 'rgba(255,255,255,0.86)';
+        ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        const title = creature.imageCaption.length > 19 ? `${creature.imageCaption.slice(0, 18)}…` : creature.imageCaption;
+        ctx.fillText(title, cardX + 9, cardY + imageSize + 22);
+      }
+      ctx.restore();
+    }
   }
 }
