@@ -75,3 +75,9 @@ dynamics, so that its regularities can only be found by interpretation.
 - Heading drift is a slow deterministic curve sampled per pulse, not a random walk.
 
 **Not changed yet**: `behavior.ts` (BehaviorScheduler) still uses seeded random waits and hazard rates for morphology and macro events.
+
+## v10.2 — rounded glow
+- The membrane spike is no longer used as the light directly. It is accumulated into a glow (rise), which fades more slowly (fall), then passes through a soft saturation and a second smoothing stage. A blink now swells and ebbs (~0.5 s up, ~1.5 s down) instead of flashing and vanishing (~0.27 s / ~0.6 s before).
+- Within a burst, successive spikes merge into a pulsing swell, so a signal reads as breathing light.
+- `LIGHT.modelRate` lowered 10 -> 7: fewer bursts overall (about 25% fewer).
+- Tuning knobs in creature.ts `LIGHT`: `riseRate` (lower = slower swell), `fallRate` (lower = longer ebb), `smoothRate` (lower = rounder onset), `gain` (higher = brighter and lingers longer).

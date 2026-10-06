@@ -33,7 +33,13 @@ const LOCOMOTION = {
  * The input current must stay in the bursting window (about 3.0-3.25): lower is
  * quiet, higher turns into continuous flicker.
  */
-const LIGHT = { modelRate: 10, gSeen: 0.03, gBody: 0.01, inputMax: 3.2, warmup: 800 };
+const LIGHT = {
+  modelRate: 7, gSeen: 0.05, gBody: 0.02, inputMax: 3.2, warmup: 800,
+  // Light response of the tissue: a brief membrane spike is slowly *accumulated*
+  // into a glow (rise), the glow fades more slowly (fall), and a second
+  // smoothing stage removes any sharp onset so a blink swells and ebbs.
+  riseRate: 8, fallRate: 2.5, smoothRate: 6, gain: 4,
+};
 const WORLD = { xFrac: 0.34, xMax: 240, yFrac: 0.34, yMax: 320 };
 
 function angleDiff(target: number, from: number): number {
@@ -114,6 +120,7 @@ export class Creature {
   // body's own contraction only nudge its input current continuously, so
   // whether a nudge matters depends on the hidden state it lands in.
   signal = 0;                 // smoothed light output 0..1, read by the renderer
+  private glow = 0;           // first-stage glow accumulator
   private memX = -1.3;
   private memY = -7;
   private memZ = 2;
@@ -149,7 +156,7 @@ export class Creature {
     // population contains noticeably smaller bodies. This lowers the
     // average body size without changing the maximum.
     this.baseScale = 0.76 + fract(data.seed * 7.31) * 0.52;
-    this.memInput = 3.02 + fract(data.seed * 6.13) * 0.10;
+    this.memInput = 3.04 + fract(data.seed * 6.13) * 0.10;
     this.memSlow = 0.002 + fract(data.seed * 4.71) * 0.001;
     this.memX = -1.4 + fract(data.seed * 7.7) * 0.5;
     this.memY = -7 + fract(data.seed * 5.3) * 3;
@@ -374,10 +381,13 @@ export class Creature {
       this.stepMembrane(input, h);
       remaining -= h;
     }
-    // Photocyte-like response: the light rises quickly and fades more slowly.
+    // Photocyte-like response in two stages, so a flash has a rounded swell and
+    // a slow ebb instead of an instant on/off.
     const raw = clamp((this.memX + 0.3) / 1.6, 0, 1);
-    const target = raw * raw * (3 - 2 * raw);
-    this.signal += (target - this.signal) * Math.min(1, dt * (target > this.signal ? 22 : 9));
+    const spike = raw * raw * (3 - 2 * raw);
+    this.glow += (spike - this.glow) * Math.min(1, dt * (spike > this.glow ? LIGHT.riseRate : LIGHT.fallRate));
+    const saturated = 1 - Math.exp(-LIGHT.gain * this.glow);   // soft ceiling, no hard clip
+    this.signal += (saturated - this.signal) * Math.min(1, dt * LIGHT.smoothRate);
   }
 
   /** Recompute the visible contour and the hitbox from the same body state. */
