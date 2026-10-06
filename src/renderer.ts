@@ -157,8 +157,8 @@ export class Renderer {
       ctx.globalCompositeOperation = 'lighter';
       const haloR = baseRadius * (1.15 + sig * 0.55);
       const halo = ctx.createRadialGradient(0, 0, 0, 0, 0, haloR);
-      halo.addColorStop(0, `hsla(${hue - 20}, 100%, 92%, ${0.55 * sig * perspective})`);
-      halo.addColorStop(0.45, `hsla(${hue}, 95%, 70%, ${0.26 * sig * perspective})`);
+      halo.addColorStop(0, `hsla(${hue - 20}, 100%, 92%, ${0.1 * sig * perspective})`);
+      halo.addColorStop(0.45, `hsla(${hue}, 95%, 70%, ${0.09 * sig * perspective})`);
       halo.addColorStop(1, 'transparent');
       ctx.fillStyle = halo;
       ctx.beginPath(); ctx.arc(0, 0, haloR, 0, Math.PI * 2); ctx.fill();
