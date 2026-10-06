@@ -6,7 +6,7 @@ import { CreatureSound } from './sound';
 import { ResourceProvider } from './provider';
 import { DNAEngine, ConceptDNA } from './procedural';
 import type { NeighborInfluence, RippleInfluence } from './world';
-import { buildColliders, computeBodyShape, createBodyShape, type Collider } from './body';
+import { buildHull, computeBodyShape, createBodyShape, createHull } from './body';
 
 /**
  * Locomotion tuning. Units: px, seconds.
@@ -34,7 +34,7 @@ const LOCOMOTION = {
  * quiet, higher turns into continuous flicker.
  */
 const LIGHT = {
-  modelRate: 7, gSeen: 0.04, gBody: 0.01, inputMax: 3.2, warmup: 800,
+  modelRate: 7, gSeen: 0.05, gBody: 0.02, inputMax: 3.2, warmup: 800,
   // Light response of the tissue: a brief membrane spike is slowly *accumulated*
   // into a glow (rise), the glow fades more slowly (fall), and a second
   // smoothing stage removes any sharp onset so a blink swells and ebbs.
@@ -97,8 +97,7 @@ export class Creature {
   boundRadius = 36;
   mass = 1;
   readonly shape = createBodyShape();
-  private readonly collisionShape = createBodyShape();
-  colliders: Collider[] = [];
+  readonly hull = createHull();
   private organicPhase = 0;
 
   // Kinematic state is intentionally semantic-free.
@@ -392,12 +391,10 @@ export class Creature {
 
   /** Recompute the visible contour and the hitbox from the same body state. */
   refreshBody(): void {
-    computeBodyShape(this, this.shape, false);
-    computeBodyShape(this, this.collisionShape, true);
-    this.boundRadius = buildColliders(this.collisionShape, this.bodySX, this.bodySY, this.rotation, this.colliders);
-    let m = 0;
-    for (const c of this.colliders) m += c.r * c.r;
-    this.mass = Math.max(200, m);
+    computeBodyShape(this, this.shape);
+    buildHull(this.shape, this.crystalline <= 0.5, this.bodySX, this.bodySY, this.rotation, this.hull);
+    this.boundRadius = this.hull.radius;
+    this.mass = Math.max(200, this.hull.area);
   }
 
   /** Slow quasi-periodic rhythm (incommensurate sines), unique to each body. */

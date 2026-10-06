@@ -93,16 +93,61 @@ export function collectRippleInfluences(
   return result;
 }
 
+
+/**
+ * Deepest vertex of `a` that lies inside the contour of `b`.
+ * Returns the push needed to bring that vertex back out through the nearest
+ * edge of `b`, expressed as a direction `u` (unit, moving `a` out of `b`).
+ */
+function deepestVertex(a: Creature, b: Creature, out: { depth: number; ux: number; uy: number; px: number; py: number }): boolean {
+  const ha = a.hull; const hb = b.hull;
+  const ox = a.x - b.x; const oy = a.y - b.y;     // a's origin in b's frame
+  const bn = hb.n;
+  let found = false;
+  out.depth = 0;
+  for (let i = 0; i < ha.n; i += 1) {
+    const vx = ox + ha.x[i]; const vy = oy + ha.y[i];
+    // Cheap reject: outside b's bounding circle.
+    if (vx * vx + vy * vy > hb.radius * hb.radius) continue;
+    let inside = false;
+    let best = Infinity; let bx = 0; let by = 0;
+    for (let j = 0, k = bn - 1; j < bn; k = j, j += 1) {
+      const x1 = hb.x[k]; const y1 = hb.y[k]; const x2 = hb.x[j]; const y2 = hb.y[j];
+      if ((y1 > vy) !== (y2 > vy) && vx < ((x2 - x1) * (vy - y1)) / (y2 - y1) + x1) inside = !inside;
+      const dx = x2 - x1; const dy = y2 - y1;
+      const len2 = dx * dx + dy * dy || 1;
+      const t = Math.max(0, Math.min(1, ((vx - x1) * dx + (vy - y1) * dy) / len2));
+      const cx = x1 + t * dx; const cy = y1 + t * dy;
+      const d2 = (vx - cx) * (vx - cx) + (vy - cy) * (vy - cy);
+      if (d2 < best) { best = d2; bx = cx; by = cy; }
+    }
+    if (!inside) continue;
+    const d = Math.sqrt(best);
+    if (d > out.depth) {
+      out.depth = d; found = true;
+      const inv = d > 1e-4 ? 1 / d : 0;
+      out.ux = (bx - vx) * inv; out.uy = (by - vy) * inv;
+      out.px = a.x + ha.x[i]; out.py = a.y + ha.y[i];
+    }
+  }
+  return found;
+}
+
+const probeA = { depth: 0, ux: 0, uy: 0, px: 0, py: 0 };
+const probeB = { depth: 0, ux: 0, uy: 0, px: 0, py: 0 };
+
 /**
  * Contact resolution between creature bodies.
  *
- * Each body is a chain of circles built from its *current* contour (see body.ts),
- * so a morph change immediately changes what can be hit. Overlap is removed by
- * moving both bodies (heavier ones move less), approaching velocity is cancelled
- * with a little bounce, and an off-centre contact turns the body slightly.
- * Several iterations let stacked contacts settle without tunnelling.
+ * Bodies collide as the exact contour that is drawn (body.ts buildHull), so
+ * spikes, ribbons, droplet tails and bloom swelling all hit where they are
+ * visible, in the same frame the morphology changes. For each pair the deepest
+ * contour vertex lying inside the other body is pushed out through the nearest
+ * edge: overlap is removed from both bodies (heavier moves less), approach
+ * velocity is cancelled with a small rebound, and an off-centre contact turns
+ * the body slightly. Several iterations let stacked contacts settle.
  */
-export function resolveCollisions(creatures: readonly Creature[], iterations = 4): void {
+export function resolveCollisions(creatures: readonly Creature[], iterations = 6): void {
   const n = creatures.length;
   for (let it = 0; it < iterations; it += 1) {
     let any = false;
@@ -111,39 +156,34 @@ export function resolveCollisions(creatures: readonly Creature[], iterations = 4
       for (let j = i + 1; j < n; j += 1) {
         const b = creatures[j];
         if (Math.abs(a.z - b.z) > 60) continue;
-        const cx = b.x - a.x;
-        const cy = b.y - a.y;
+        const cx = b.x - a.x; const cy = b.y - a.y;
         const reach = a.boundRadius + b.boundRadius;
         if (cx * cx + cy * cy > reach * reach) continue;
 
-        // Deepest overlapping pair of circles.
-        let bestPen = 0; let nx = 0; let ny = 0; let px = 0; let py = 0;
-        for (const ca of a.colliders) {
-          const ax = a.x + ca.ox; const ay = a.y + ca.oy;
-          for (const cb of b.colliders) {
-            const dx = b.x + cb.ox - ax;
-            const dy = b.y + cb.oy - ay;
-            const d = Math.hypot(dx, dy);
-            const pen = ca.r + cb.r - d;
-            if (pen > bestPen) {
-              bestPen = pen;
-              if (d > 0.001) { nx = dx / d; ny = dy / d; } else { nx = cx > 0 ? 1 : -1; ny = 0; }
-              px = ax + nx * ca.r; py = ay + ny * ca.r;
-            }
-          }
+        const aIn = deepestVertex(a, b, probeA);   // a's vertex inside b: a must move along u
+        const bIn = deepestVertex(b, a, probeB);   // b's vertex inside a: b must move along u
+        if (!aIn && !bIn) continue;
+
+        // Normal pointing from a to b, plus the deepest overlap.
+        let depth: number; let nx: number; let ny: number; let px: number; let py: number;
+        if (aIn && (!bIn || probeA.depth >= probeB.depth)) {
+          depth = probeA.depth; nx = -probeA.ux; ny = -probeA.uy; px = probeA.px; py = probeA.py;
+        } else {
+          depth = probeB.depth; nx = probeB.ux; ny = probeB.uy; px = probeB.px; py = probeB.py;
         }
-        if (bestPen <= 0) continue;
+        if (depth <= 0.01) continue;
+        if (nx === 0 && ny === 0) {
+          const d = Math.hypot(cx, cy) || 1; nx = cx / d; ny = cy / d;
+        }
         any = true;
 
-        const invA = 1 / a.mass;
-        const invB = 1 / b.mass;
+        const invA = 1 / a.mass; const invB = 1 / b.mass;
         const shareA = invA / (invA + invB);
         const shareB = 1 - shareA;
-        const push = Math.min(bestPen, 8) * 0.9;
+        const push = Math.min(depth, 10) * 0.95;
         a.x -= nx * push * shareA; a.y -= ny * push * shareA;
         b.x += nx * push * shareB; b.y += ny * push * shareB;
 
-        // Cancel approach speed along the normal; keep a small rebound.
         const vn = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
         if (vn < 0) {
           const e = 0.2;
@@ -156,8 +196,7 @@ export function resolveCollisions(creatures: readonly Creature[], iterations = 4
           }
         }
 
-        // Off-centre contact swings the body: torque = r x F, normalised.
-        const kick = Math.min(1, bestPen / 12) * 0.02;
+        const kick = Math.min(1, depth / 12) * 0.02;
         const turn = (c: Creature, fx: number, fy: number) => {
           const rx = px - c.x; const ry = py - c.y;
           const len = Math.hypot(rx, ry);

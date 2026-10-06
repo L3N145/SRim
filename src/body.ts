@@ -18,15 +18,21 @@ export interface BodyShape {
   ys: Float32Array;
 }
 
-export interface Collider {
-  /** Offset from the creature centre, already rotated into world axes. */
-  ox: number;
-  oy: number;
-  r: number;
+/** Collision contour in world-axis offsets from the creature centre. */
+export interface Hull {
+  n: number;
+  x: Float32Array;
+  y: Float32Array;
+  radius: number;   // max distance from centre (broad phase)
+  area: number;     // polygon area (used as mass)
 }
 
 export function createBodyShape(): BodyShape {
   return { n: 0, xs: new Float32Array(MAX_OUTLINE_POINTS), ys: new Float32Array(MAX_OUTLINE_POINTS) };
+}
+
+export function createHull(): Hull {
+  return { n: 0, x: new Float32Array(MAX_OUTLINE_POINTS), y: new Float32Array(MAX_OUTLINE_POINTS), radius: 36, area: 4000 };
 }
 
 function microWobble(phase: number, angle: number, scale: number): number {
@@ -39,10 +45,7 @@ function fleshWobble(phase: number, angle: number, seed: number): number {
     + Math.sin(phase * 4.7 + angle * 9.0 + seed * 2.0) * 0.18;
 }
 
-/** Fraction of spike height that counts as solid. Spikes are soft tips. */
-const COLLISION_SPIKE_FACTOR = 0.75;
-
-export function computeBodyShape(c: Creature, out: BodyShape, forCollision = false): void {
+export function computeBodyShape(c: Creature, out: BodyShape): void {
   const baseRadius = 36 * c.scale;
   const phase = c.phase;
   const spike = c.spike;
@@ -62,15 +65,13 @@ export function computeBodyShape(c: Creature, out: BodyShape, forCollision = fal
     const contraction = c.bodyBreath * 1.65 + c.bodyPulse * 0.72;
     const bodyWave = c.bodyOrganic * (0.75 + 0.28 * Math.sin(angle * 2 + phase * 0.17));
     let r = baseRadius * (1 + contraction * 0.038 + bodyWave * 0.016);
-    if (!forCollision) {
-      const livingWobble = fleshWobble(phase, angle, seed);
-      const visibleFlesh = livingWobble * (1.55 + c.bodyTension * 1.1);
-      r += Math.sin(phase * 0.8 + angle * 2) * (2.4 + microWobble(phase, angle, c.getBaseScale()) * 1.0) * (1.0 - spike)
-        + visibleFlesh;
-    }
+    const livingWobble = fleshWobble(phase, angle, seed);
+    const visibleFlesh = livingWobble * (1.55 + c.bodyTension * 1.1);
+    r += Math.sin(phase * 0.8 + angle * 2) * (2.4 + microWobble(phase, angle, c.getBaseScale()) * 1.0) * (1.0 - spike)
+      + visibleFlesh;
     if (spike > 0.01) {
       const spikeWave = Math.pow(Math.abs(Math.sin(angle * (spikeFreq / 2) + phase * 0.2)), 3.0);
-      r += spikeWave * 22 * spike * (forCollision ? COLLISION_SPIKE_FACTOR : 1);
+      r += spikeWave * 22 * spike;
     }
     if (cryst > 0.01) r *= 1.0 + Math.sin(angle * 4) * (0.28 * cryst) + Math.sin(angle * 8) * (0.06 * cryst);
     if (vortex > 0.01) {
@@ -92,61 +93,40 @@ export function computeBodyShape(c: Creature, out: BodyShape, forCollision = fal
   }
 }
 
-/** Soft bodies are slightly forgiving: allow a hair of overlap at the skin. */
-const SOFT_MARGIN = 1.5;
-
 /**
- * Approximate the (possibly elongated / non-convex) contour with a short chain
- * of circles. Each circle is the vertical slice of the contour at its x-position,
- * so a ribbon becomes a long chain, a droplet a fat head plus a thinning tail,
- * and a round body a single circle.
+ * Collision contour = the contour that is actually drawn. The renderer smooths
+ * the control points with quadratic curves, which pass through the midpoints
+ * between control points; sampling the curve at t=0.5 gives
+ * 0.125*p[i-1] + 0.75*p[i] + 0.125*p[i+1]. Crystalline bodies are drawn with
+ * straight edges, so their control points are used as they are. Spikes, ribbons
+ * and droplet tails therefore collide exactly where they are visible.
  */
-export function buildColliders(
-  shape: BodyShape,
-  sx: number,
-  sy: number,
-  rotation: number,
-  out: Collider[],
-): number {
+export function buildHull(shape: BodyShape, smooth: boolean, sx: number, sy: number, rotation: number, out: Hull): void {
   const n = shape.n;
-  let minX = Infinity; let maxX = -Infinity; let minY = Infinity; let maxY = -Infinity;
-  for (let i = 0; i < n; i += 1) {
-    const x = shape.xs[i] * sx;
-    const y = shape.ys[i] * sy;
-    if (x < minX) minX = x;
-    if (x > maxX) maxX = x;
-    if (y < minY) minY = y;
-    if (y > maxY) maxY = y;
-  }
-  const length = maxX - minX;
-  const halfH = (maxY - minY) / 2;
-  const k = Math.max(1, Math.min(6, Math.round(length / Math.max(halfH * 1.2, 10))));
   const cos = Math.cos(rotation);
   const sin = Math.sin(rotation);
-
-  out.length = 0;
-  for (let j = 0; j < k; j += 1) {
-    const xj = minX + ((j + 0.5) / k) * length;
-    let lo = Infinity; let hi = -Infinity;
-    for (let i = 0; i < n; i += 1) {
-      const i2 = (i + 1) % n;
-      const x1 = shape.xs[i] * sx; const y1 = shape.ys[i] * sy;
-      const x2 = shape.xs[i2] * sx; const y2 = shape.ys[i2] * sy;
-      if ((x1 <= xj && x2 >= xj) || (x2 <= xj && x1 >= xj)) {
-        if (x1 === x2) {
-          lo = Math.min(lo, y1, y2); hi = Math.max(hi, y1, y2);
-        } else {
-          const y = y1 + ((xj - x1) / (x2 - x1)) * (y2 - y1);
-          if (y < lo) lo = y;
-          if (y > hi) hi = y;
-        }
-      }
+  let radius = 0;
+  let area = 0;
+  for (let i = 0; i < n; i += 1) {
+    let lx: number; let ly: number;
+    if (smooth) {
+      const a = (i + n - 1) % n; const c = (i + 1) % n;
+      lx = 0.125 * shape.xs[a] + 0.75 * shape.xs[i] + 0.125 * shape.xs[c];
+      ly = 0.125 * shape.ys[a] + 0.75 * shape.ys[i] + 0.125 * shape.ys[c];
+    } else {
+      lx = shape.xs[i]; ly = shape.ys[i];
     }
-    if (!Number.isFinite(lo)) continue;
-    const r = Math.max(6, (hi - lo) / 2 - SOFT_MARGIN);
-    const cy = (hi + lo) / 2;
-    out.push({ ox: xj * cos - cy * sin, oy: xj * sin + cy * cos, r });
+    lx *= sx; ly *= sy;
+    out.x[i] = lx * cos - ly * sin;
+    out.y[i] = lx * sin + ly * cos;
+    const d = Math.hypot(out.x[i], out.y[i]);
+    if (d > radius) radius = d;
   }
-  if (out.length === 0) out.push({ ox: 0, oy: 0, r: Math.max(6, 36 * 0.8) });
-  return Math.hypot(Math.max(Math.abs(minX), Math.abs(maxX)), Math.max(Math.abs(minY), Math.abs(maxY)));
+  for (let i = 0; i < n; i += 1) {
+    const j = (i + 1) % n;
+    area += out.x[i] * out.y[j] - out.x[j] * out.y[i];
+  }
+  out.n = n;
+  out.radius = radius;
+  out.area = Math.abs(area) / 2;
 }

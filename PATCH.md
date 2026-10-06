@@ -81,3 +81,11 @@ dynamics, so that its regularities can only be found by interpretation.
 - Within a burst, successive spikes merge into a pulsing swell, so a signal reads as breathing light.
 - `LIGHT.modelRate` lowered 10 -> 7: fewer bursts overall (about 25% fewer).
 - Tuning knobs in creature.ts `LIGHT`: `riseRate` (lower = slower swell), `fallRate` (lower = longer ebb), `smoothRate` (lower = rounder onset), `gain` (higher = brighter and lingers longer).
+
+## v10.3 — exact-contour collision
+- The old circle-chain hitbox badly under-covered spiky bodies: measured against the drawn contour, spiky bodies overlapped by up to ~26 px (>3 px in 95% of frames).
+- Collision now uses the contour that is actually drawn (`buildHull` in body.ts: the renderer's smoothed curve, or straight edges for crystalline). Spikes, ribbon, droplet tail and bloom swelling collide exactly where visible, in the same frame the morphology changes. Spikes are no longer discounted.
+- `resolveCollisions` (world.ts): per pair, find the deepest contour vertex inside the other body and push it out through the nearest edge; both bodies move (heavier moves less), approach velocity is cancelled, off-centre contact turns the body. 6 iterations per frame.
+- Measured against a finer re-sampling of the drawn contour: spiky max overlap ~2.6 px (was ~26), mixed morphs ~3.4 px (was ~20), >3 px in 5 of 5400 frames.
+- Cost with 12 crowded spiky bodies: ~1 ms/frame average.
+- Known limit: two thin spikes can cross without either tip lying inside the other body; this is rare at the current 64-point contour.
