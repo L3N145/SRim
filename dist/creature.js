@@ -43,6 +43,11 @@ export class Creature {
     bodyBreath = 0;
     bodyPulse = 0;
     bodyTension = 0;
+    // Correlated multi-scale fluctuation used for visible bodily liveliness.
+    // This is intentionally not a mathematically exact 1/f process; it is a
+    // lightweight pink-noise-like approximation made from several time scales.
+    bodyOrganic = 0;
+    organicPhase = 0;
     // Kinematic state is intentionally semantic-free.
     heading = 0;
     angularVelocity = 0;
@@ -56,6 +61,11 @@ export class Creature {
     lastNeighborCheck = -Infinity;
     motionSpeed = 0.075;
     motionSpeedTarget = 0.075;
+    // Short-lived locomotion intention: a direction tendency that persists for
+    // seconds instead of choosing a fresh random direction every frame.
+    locomotionBias = 0;
+    locomotionStrength = 0;
+    locomotionUntil = -Infinity;
     nextWanderChangeAt = -Infinity;
     wanderTargetTurn = 0;
     divisionRequestedAt = -Infinity;
@@ -74,7 +84,8 @@ export class Creature {
         this.heading = ((data.seed * 17.17) % (Math.PI * 2));
         this.preferredTurn = data.seed > 0.5 ? 1 : -1;
         this.baseScale = 1.0 + fract(data.seed * 7.31) * 0.28;
-        this.nextWanderChangeAt = performance.now() / 1000 + 1.5 + fract(data.seed * 5.17) * 2.5;
+        this.nextWanderChangeAt = performance.now() / 1000 + 0.9 + fract(data.seed * 5.17) * 1.8;
+        this.locomotionBias = this.heading + (fract(data.seed * 3.71) - 0.5) * 0.8;
         this.activeDNA = DNAEngine.synthesize(data.seed);
         this.targetDNA = { ...this.activeDNA };
         this.currentHue = this.activeDNA.hue + data.colorHueOffset;
@@ -113,6 +124,7 @@ export class Creature {
         // rise, fall, pause, and resume. This keeps the motion organic without
         // requiring a dedicated "social behavior" or "emotion" state.
         this.phase += safeDt * (0.18 + micro * 1.55);
+        this.organicPhase += safeDt * (0.42 + this.data.baseViscosity * 0.9);
         // Three time scales keep the body alive even when locomotion is quiet:
         // slow respiration, a shorter muscular pulse, and a faint irregular tension.
         const breathPhase = this.phase * (0.34 + this.data.baseViscosity * 2.1) + this.data.seed * 4.7;
@@ -121,28 +133,49 @@ export class Creature {
         const breathing = Math.sin(breathPhase) * 0.62 + Math.sin(breathPhase * 0.47 + 1.7) * 0.22;
         const pulse = Math.sin(pulsePhase) * 0.5 + Math.sin(pulsePhase * 1.73 + 0.9) * 0.16;
         const tension = Math.sin(tensionPhase) * 0.5 + Math.sin(tensionPhase * 0.61 + 2.2) * 0.35;
+        // Several frequencies with decreasing amplitude give a perceptually
+        // pink-noise-like rhythm: slow body drift dominates, but faster
+        // fluctuations remain visible. The phases are irrationally related so
+        // the result does not settle into an obvious repeating loop.
+        const organic = Math.sin(this.organicPhase * 0.31 + this.data.seed * 13.1) * 0.92 +
+            Math.sin(this.organicPhase * 0.73 + this.data.seed * 7.7) * 0.58 +
+            Math.sin(this.organicPhase * 1.61 + this.data.seed * 19.3) * 0.36 +
+            Math.sin(this.organicPhase * 3.37 + this.data.seed * 4.9) * 0.22 +
+            Math.sin(this.organicPhase * 7.11 + this.data.seed * 23.7) * 0.13;
         this.bodyBreath += (breathing - this.bodyBreath) * Math.min(1, safeDt * 1.8);
         this.bodyPulse += (pulse - this.bodyPulse) * Math.min(1, safeDt * 3.4);
         this.bodyTension += (tension - this.bodyTension) * Math.min(1, safeDt * 2.2);
+        this.bodyOrganic += (organic * 0.43 - this.bodyOrganic) * Math.min(1, safeDt * 2.0);
         const speedRhythm = 0.5 + 0.5 * Math.sin(this.phase * 0.19 + this.data.seed * 5.1);
-        const naturalTarget = 0.115 + micro * 0.22 + speedRhythm * 0.055;
-        this.motionSpeedTarget += (naturalTarget - this.motionSpeedTarget) * Math.min(1, safeDt * 0.8);
-        this.motionSpeed += (this.motionSpeedTarget - this.motionSpeed) * Math.min(1, safeDt * 1.6);
-        const wandering = 0.085 + micro * 0.24;
+        const naturalTarget = 0.19 + micro * 0.28 + speedRhythm * 0.09;
+        this.motionSpeedTarget += (naturalTarget - this.motionSpeedTarget) * Math.min(1, safeDt * 0.55);
+        this.motionSpeed += (this.motionSpeedTarget - this.motionSpeed) * Math.min(1, safeDt * 1.15);
+        const wandering = 0.15 + micro * 0.32;
         const noiseX = Math.sin(this.phase * 0.73 + this.data.seed * 8.1);
         const noiseY = Math.cos(this.phase * 0.57 + this.data.seed * 5.7);
         this.vx += noiseX * wandering * safeDt;
         this.vy += noiseY * wandering * safeDt;
-        // Ordinary locomotion has its own low-frequency direction changes,
-        // separate from bursts, hesitations, and morphology.
+        // Ordinary locomotion has a short-lived, non-semantic direction tendency.
+        // The tendency lasts for seconds, so motion has continuity rather than
+        // becoming a frame-by-frame random walk.
+        if (now >= this.locomotionUntil) {
+            const turnNoise = Math.sin(this.phase * 0.47 + this.data.seed * 13.7);
+            const drift = (fract(this.data.seed * 31.7 + Math.floor(now / 7.0)) - 0.5) * 1.1;
+            this.locomotionBias = this.heading + turnNoise * 0.55 + drift * 0.35;
+            this.locomotionStrength = 0.30 + fract(this.data.seed * 17.3 + Math.floor(now / 5.0)) * 0.45;
+            this.locomotionUntil = now + 2.4 + fract(this.data.seed * 23.1 + Math.floor(now / 11.0)) * 4.0;
+        }
+        const angleToBias = Math.atan2(Math.sin(this.locomotionBias - this.heading), Math.cos(this.locomotionBias - this.heading));
+        const steering = angleToBias * this.locomotionStrength;
+        this.angularVelocity += steering * safeDt * (0.55 + this.data.responsiveness * 0.35);
         if (now >= this.nextWanderChangeAt) {
             const wobble = Math.sin(this.phase * 1.73 + this.data.seed * 11.7);
             this.wanderTargetTurn = wobble * (0.010 + this.data.responsiveness * 0.012);
-            this.nextWanderChangeAt = now + 1.1 + Math.abs(wobble) * 2.6;
+            this.nextWanderChangeAt = now + 1.0 + Math.abs(wobble) * 2.0;
         }
         this.angularVelocity += this.wanderTargetTurn * safeDt;
-        this.angularVelocity += Math.sin(this.phase * 0.31 + this.data.seed * 4) * 0.0048 * safeDt;
-        this.angularVelocity *= Math.pow(0.965, safeDt * 60);
+        this.angularVelocity += Math.sin(this.phase * 0.31 + this.data.seed * 4) * 0.006 * safeDt;
+        this.angularVelocity *= Math.pow(0.975, safeDt * 60);
         this.heading += this.angularVelocity * 60 * safeDt;
         // Pending events create a barely visible preparation. The user can notice
         // that something is changing without being told what it means.
@@ -160,7 +193,7 @@ export class Creature {
         this.applyNeighborField(neighbors, safeDt);
         const forwardX = Math.cos(this.heading);
         const forwardY = Math.sin(this.heading);
-        const propulsion = this.motionSpeed * (0.16 + this.data.baseViscosity * 0.35);
+        const propulsion = this.motionSpeed * (0.42 + this.data.baseViscosity * 0.52);
         this.vx += forwardX * propulsion * safeDt;
         this.vy += forwardY * propulsion * safeDt;
         if (this.burst > 0) {
@@ -187,7 +220,7 @@ export class Creature {
         // Soft speed limit. Instead of clipping velocity abruptly, excess speed
         // is removed gradually so acceleration/deceleration remain visible.
         const speed = Math.hypot(this.vx, this.vy);
-        const maxSpeed = 0.42 + this.burst * 0.06;
+        const maxSpeed = 0.58 + this.burst * 0.08;
         if (speed > maxSpeed) {
             const damping = Math.min(1, safeDt * 2.8);
             const scale = 1 - damping * (1 - maxSpeed / speed);
@@ -196,8 +229,8 @@ export class Creature {
         }
         // Slightly higher world-space travel makes the autonomous trajectory
         // legible on a phone-sized screen.
-        this.x += this.vx * safeDt * 48;
-        this.y += this.vy * safeDt * 48;
+        this.x += this.vx * safeDt * 56;
+        this.y += this.vy * safeDt * 56;
         this.z += this.vz * safeDt * 40;
         this.rotation += (this.angularVelocity + this.vx * 0.0008) * 60 * safeDt;
         const bodyScale = this.bodyBreath * (0.024 + micro * 0.035) + this.bodyPulse * 0.009 + this.bodyTension * 0.006;
@@ -330,12 +363,12 @@ export class Creature {
     setMorphTargetsForAction(action) {
         switch (action) {
             case 'spiky':
-                this.targetScale = 1.035;
-                this.targetSpike = 0.70;
+                this.targetScale = 1.04;
+                this.targetSpike = 0.82;
                 break;
             case 'bloom':
-                this.targetScale = 1.13;
-                this.targetBloom = 0.72;
+                this.targetScale = 1.10;
+                this.targetBloom = 0.60;
                 break;
             case 'giant':
                 this.targetScale = 1.58;
@@ -346,17 +379,17 @@ export class Creature {
                 this.targetScale = 0.88;
                 break;
             case 'droplet':
-                this.targetStretch = 0.70;
+                this.targetStretch = 0.92;
                 break;
             case 'crystalline':
-                this.targetCrystalline = 0.68;
+                this.targetCrystalline = 0.82;
                 break;
             case 'ribbon':
-                this.targetRibbon = 0.68;
-                this.targetScale = 1.06;
+                this.targetRibbon = 0.86;
+                this.targetScale = 1.04;
                 break;
             case 'vortex':
-                this.targetVortex = 0.70;
+                this.targetVortex = 0.88;
                 break;
             case 'normal':
             default: break;

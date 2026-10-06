@@ -117,18 +117,18 @@ export class Renderer {
         const spikeWave = Math.pow(Math.abs(Math.sin(angle * (spikeFreq / 2) + phase * 0.2)), 3.0);
         r += spikeWave * (22 * spike * perspective);
       }
-      if (cryst > 0.01) r *= 1.0 + Math.sin(angle * 4) * (0.2 * cryst);
-      if (vortex > 0.01) r += Math.sin(angle * 3 + phase * 2.0) * (8.0 * vortex * perspective);
+      if (cryst > 0.01) r *= 1.0 + Math.sin(angle * 4) * (0.28 * cryst) + Math.sin(angle * 8) * (0.06 * cryst);
+      if (vortex > 0.01) r += Math.sin(angle * 3 + phase * 2.0) * (13.0 * vortex * perspective) + Math.sin(angle * 6 - phase * 1.4) * (3.5 * vortex * perspective);
       let px = Math.cos(angle) * r;
       let py = Math.sin(angle) * r;
       if (stretch > 0.01 && Math.cos(angle) < 0) {
-        px -= Math.abs(Math.cos(angle)) * (36 * stretch * perspective);
-        py *= 1.0 - Math.abs(Math.cos(angle)) * 0.4 * stretch;
+        px -= Math.abs(Math.cos(angle)) * (48 * stretch * perspective);
+        py *= 1.0 - Math.abs(Math.cos(angle)) * 0.50 * stretch;
       }
       if (ribbon > 0.01) {
-        px *= 1.0 + 0.6 * ribbon;
-        py *= 1.0 - 0.35 * ribbon;
-        py += Math.sin(px * 0.08 + phase * 1.5) * (8.0 * ribbon);
+        px *= 1.0 + 0.78 * ribbon;
+        py *= 1.0 - 0.48 * ribbon;
+        py += Math.sin(px * 0.065 + phase * 1.5) * (12.0 * ribbon);
       }
       points.push({ x: px, y: py });
     }

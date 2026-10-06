@@ -394,14 +394,14 @@ export class Creature {
 
   private setMorphTargetsForAction(action: MorphAction): void {
     switch (action) {
-      case 'spiky': this.targetScale = 1.035; this.targetSpike = 0.70; break;
-      case 'bloom': this.targetScale = 1.13; this.targetBloom = 0.72; break;
+      case 'spiky': this.targetScale = 1.04; this.targetSpike = 0.82; break;
+      case 'bloom': this.targetScale = 1.10; this.targetBloom = 0.60; break;
       case 'giant': this.targetScale = 1.58; this.targetBloom = 0.92; this.burst = Math.max(this.burst, 0.95); break;
       case 'compact': this.targetScale = 0.88; break;
-      case 'droplet': this.targetStretch = 0.70; break;
-      case 'crystalline': this.targetCrystalline = 0.68; break;
-      case 'ribbon': this.targetRibbon = 0.68; this.targetScale = 1.06; break;
-      case 'vortex': this.targetVortex = 0.70; break;
+      case 'droplet': this.targetStretch = 0.92; break;
+      case 'crystalline': this.targetCrystalline = 0.82; break;
+      case 'ribbon': this.targetRibbon = 0.86; this.targetScale = 1.04; break;
+      case 'vortex': this.targetVortex = 0.88; break;
       case 'normal': default: break;
     }
   }

@@ -19,3 +19,12 @@
 
 \n## v7 autonomous locomotion\n- Increased sustained self-propulsion and the baseline movement target, independent of burst/morph events.\n- Increased low-frequency wander and ordinary heading changes so movement is legible at phone scale.\n- Raised the soft speed ceiling while keeping gradual damping, so creatures travel visibly without snapping like projectiles.\n- These are physical movement dynamics, not semantic actions or reactions to user input.\n
 \n## v8 locomotion model\n- Replaced frame-to-frame random wandering with short-lived locomotion biases lasting roughly 2.4–6.4 seconds.\n- A bias is a direction tendency, not a destination or semantic goal; steering gradually bends the current heading toward it.\n- Small independent wandering remains layered on top, preserving organic uncertainty.\n- The update loop remains lightweight: a few scalar arithmetic operations and trigonometric calls per creature per frame; no ML inference, network request, image processing, or pathfinding is performed continuously.\n\n## Battery note\n- The main ongoing cost is the animation/render loop itself. Creature simulation is O(N^2) for neighbor interactions when N creatures are present, but N is currently small.\n- The expensive online/Wikipedia operation is event-driven rather than per-frame.\n- For a future battery-friendly mode, the safest optimization is reducing simulation/render frequency or pausing when the tab is hidden, rather than removing the multi-scale motion.\n
+
+## v9 morphology balancing
+- Morphology selection now uses one canonical eight-form competition instead of giving bloom (`expand` + `bloom`) and droplet (`deform`) extra independent entries.
+- Every morphology can now be selected by autonomous, touch, audio, and neighbor/interaction pathways; rarity is controlled by weights and individual tendency rather than accidental missing routes.
+- New creatures have 1–2 persistent signature morphologies with strong preference, while the remaining forms stay possible but noticeably less likely.
+- Existing explicitly stored tendencies are preserved; only missing tendencies receive the new signature distribution.
+- Recent repetition suppression is stronger but never hard-blocks a form.
+- Bloom was visually reduced slightly so it reads as a rarer swelling event rather than the default "big light" state.
+- Droplet, ribbon, vortex, crystalline, and spiky contours were strengthened so their morphology is legible at a glance.
