@@ -152,11 +152,11 @@ export class Creature {
     this.bodyTension += (tension - this.bodyTension) * Math.min(1, safeDt * 2.2);
     this.bodyOrganic += (organic * 0.43 - this.bodyOrganic) * Math.min(1, safeDt * 2.0);
     const speedRhythm = 0.5 + 0.5 * Math.sin(this.phase * 0.19 + this.data.seed * 5.1);
-    const naturalTarget = 0.115 + micro * 0.22 + speedRhythm * 0.055;
-    this.motionSpeedTarget += (naturalTarget - this.motionSpeedTarget) * Math.min(1, safeDt * 0.8);
-    this.motionSpeed += (this.motionSpeedTarget - this.motionSpeed) * Math.min(1, safeDt * 1.6);
+    const naturalTarget = 0.19 + micro * 0.28 + speedRhythm * 0.09;
+    this.motionSpeedTarget += (naturalTarget - this.motionSpeedTarget) * Math.min(1, safeDt * 0.55);
+    this.motionSpeed += (this.motionSpeedTarget - this.motionSpeed) * Math.min(1, safeDt * 1.15);
 
-    const wandering = 0.085 + micro * 0.24;
+    const wandering = 0.15 + micro * 0.32;
     const noiseX = Math.sin(this.phase * 0.73 + this.data.seed * 8.1);
     const noiseY = Math.cos(this.phase * 0.57 + this.data.seed * 5.7);
     this.vx += noiseX * wandering * safeDt;
@@ -166,11 +166,11 @@ export class Creature {
     // separate from bursts, hesitations, and morphology.
     if (now >= this.nextWanderChangeAt) {
       const wobble = Math.sin(this.phase * 1.73 + this.data.seed * 11.7);
-      this.wanderTargetTurn = wobble * (0.010 + this.data.responsiveness * 0.012);
-      this.nextWanderChangeAt = now + 1.1 + Math.abs(wobble) * 2.6;
+      this.wanderTargetTurn = wobble * (0.018 + this.data.responsiveness * 0.020);
+      this.nextWanderChangeAt = now + 0.75 + Math.abs(wobble) * 1.9;
     }
     this.angularVelocity += this.wanderTargetTurn * safeDt;
-    this.angularVelocity += Math.sin(this.phase * 0.31 + this.data.seed * 4) * 0.0048 * safeDt;
+    this.angularVelocity += Math.sin(this.phase * 0.31 + this.data.seed * 4) * 0.0085 * safeDt;
     this.angularVelocity *= Math.pow(0.965, safeDt * 60);
     this.heading += this.angularVelocity * 60 * safeDt;
 
@@ -193,7 +193,7 @@ export class Creature {
 
     const forwardX = Math.cos(this.heading);
     const forwardY = Math.sin(this.heading);
-    const propulsion = this.motionSpeed * (0.16 + this.data.baseViscosity * 0.35);
+    const propulsion = this.motionSpeed * (0.42 + this.data.baseViscosity * 0.52);
     this.vx += forwardX * propulsion * safeDt;
     this.vy += forwardY * propulsion * safeDt;
 
@@ -221,7 +221,7 @@ export class Creature {
     // Soft speed limit. Instead of clipping velocity abruptly, excess speed
     // is removed gradually so acceleration/deceleration remain visible.
     const speed = Math.hypot(this.vx, this.vy);
-    const maxSpeed = 0.42 + this.burst * 0.06;
+    const maxSpeed = 0.58 + this.burst * 0.08;
     if (speed > maxSpeed) {
       const damping = Math.min(1, safeDt * 2.8);
       const scale = 1 - damping * (1 - maxSpeed / speed);
@@ -231,8 +231,8 @@ export class Creature {
 
     // Slightly higher world-space travel makes the autonomous trajectory
     // legible on a phone-sized screen.
-    this.x += this.vx * safeDt * 48;
-    this.y += this.vy * safeDt * 48;
+    this.x += this.vx * safeDt * 56;
+    this.y += this.vy * safeDt * 56;
     this.z += this.vz * safeDt * 40;
     this.rotation += (this.angularVelocity + this.vx * 0.0008) * 60 * safeDt;
 

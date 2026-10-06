@@ -16,3 +16,5 @@
 - Touch/audio/neighbor/autonomous morphology selection all respect the individual tendency.
 - Offspring inherit the parent's morphology tendencies with small mutation, so family resemblance can emerge without explicit social semantics.
 - Existing saved creatures receive deterministic tendencies from their seed when no tendency data exists.
+
+\n## v7 autonomous locomotion\n- Increased sustained self-propulsion and the baseline movement target, independent of burst/morph events.\n- Increased low-frequency wander and ordinary heading changes so movement is legible at phone scale.\n- Raised the soft speed ceiling while keeping gradual damping, so creatures travel visibly without snapping like projectiles.\n- These are physical movement dynamics, not semantic actions or reactions to user input.\n
