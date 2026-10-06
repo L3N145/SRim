@@ -39,7 +39,6 @@ export class BehaviorScheduler {
   private quietTime: number;
   private readiness: number;
   private microPhase: number;
-  private lastTouchAt = -Infinity;
   private lastAudioAt = -Infinity;
   private lastInteractionAt = -Infinity;
   private lastNeighborImpulseAt = -Infinity;
