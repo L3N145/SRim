@@ -2,16 +2,6 @@ import { Creature } from './creature';
 import type { Ripple } from './ripple';
 import { getRippleOpacity, getRippleRadius } from './ripple';
 
-function microWobble(phase: number, angle: number, scale: number): number {
-  return (0.5 + 0.5 * Math.sin(phase * 1.7 + angle * 3.0 + scale * 5.0));
-}
-
-function fleshWobble(phase: number, angle: number, seed: number): number {
-  return Math.sin(phase * 2.35 + angle * 5.0 + seed * 17.0) * 0.52
-    + Math.sin(phase * 0.91 - angle * 2.0 + seed * 6.0) * 0.30
-    + Math.sin(phase * 4.7 + angle * 9.0 + seed * 2.0) * 0.18;
-}
-
 export class Renderer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -77,23 +67,18 @@ export class Renderer {
     const phase = creature.phase;
     const spike = creature.spike;
     const bloom = creature.bloom;
-    const stretch = creature.stretch;
     const cryst = creature.crystalline;
     const ribbon = creature.ribbon;
-    const vortex = creature.vortex;
     const breath = creature.bodyBreath;
     const pulse = creature.bodyPulse;
-    const tension = creature.bodyTension;
     const organic = creature.bodyOrganic;
 
     ctx.save();
     ctx.translate(screenX, screenY);
     ctx.rotate(creature.rotation);
-    // A small, delayed squash/stretch makes changes of speed feel embodied.
-    // It is intentionally restrained: softness, not cartoon exaggeration.
-    const softStretch = creature.bodyStretch * 0.055;
-    const softSquish = creature.bodySquish * 0.035;
-    ctx.scale(1 + softStretch, 1 - softStretch * 0.72 - softSquish);
+    // The bell narrows while it pushes and re-expands while gliding. This is
+    // the same transform the hitbox uses.
+    ctx.scale(creature.bodySX, creature.bodySY);
 
     const auraR = baseRadius * (2.0 + bloom * 0.8 + ribbon * 0.3);
     const auraGrad = ctx.createRadialGradient(0, 0, 2, 0, 0, auraR);
@@ -103,39 +88,13 @@ export class Renderer {
     ctx.fillStyle = auraGrad;
     ctx.beginPath(); ctx.arc(0, 0, auraR, 0, Math.PI * 2); ctx.fill();
 
-    const numPoints = cryst > 0.3 ? 8 : 64;
+    // The contour is built once per frame in Creature.refreshBody() and is the
+    // same shape the collision system uses.
+    const shape = creature.shape;
+    const numPoints = shape.n;
     const points: { x: number; y: number }[] = [];
-    const spikeFreq = creature.targetDNA.spikeCount;
     for (let i = 0; i < numPoints; i += 1) {
-      const angle = (i / numPoints) * Math.PI * 2;
-      const livingWobble = fleshWobble(phase, angle, creature.data.seed);
-      const contraction = breath * 1.65 + pulse * 0.72;
-      // Make the living fluctuation legible at a glance. The slow component
-      // changes the whole body, while angularly varying components make the
-      // contour itself breathe instead of merely scaling uniformly.
-      const bodyWave = organic * (0.75 + 0.28 * Math.sin(angle * 2 + phase * 0.17));
-      const visibleFlesh = livingWobble * (1.55 + tension * 1.1);
-      let r = baseRadius * (1 + contraction * 0.038 + bodyWave * 0.016)
-        + Math.sin(phase * 0.8 + angle * 2) * (2.4 + microWobble(phase, angle, creature.getBaseScale()) * 1.0) * (1.0 - spike)
-        + visibleFlesh * perspective;
-      if (spike > 0.01) {
-        const spikeWave = Math.pow(Math.abs(Math.sin(angle * (spikeFreq / 2) + phase * 0.2)), 3.0);
-        r += spikeWave * (22 * spike * perspective);
-      }
-      if (cryst > 0.01) r *= 1.0 + Math.sin(angle * 4) * (0.28 * cryst) + Math.sin(angle * 8) * (0.06 * cryst);
-      if (vortex > 0.01) r += Math.sin(angle * 3 + phase * 2.0) * (13.0 * vortex * perspective) + Math.sin(angle * 6 - phase * 1.4) * (3.5 * vortex * perspective);
-      let px = Math.cos(angle) * r;
-      let py = Math.sin(angle) * r;
-      if (stretch > 0.01 && Math.cos(angle) < 0) {
-        px -= Math.abs(Math.cos(angle)) * (48 * stretch * perspective);
-        py *= 1.0 - Math.abs(Math.cos(angle)) * 0.50 * stretch;
-      }
-      if (ribbon > 0.01) {
-        px *= 1.0 + 0.78 * ribbon;
-        py *= 1.0 - 0.48 * ribbon;
-        py += Math.sin(px * 0.065 + phase * 1.5) * (12.0 * ribbon);
-      }
-      points.push({ x: px, y: py });
+      points.push({ x: shape.xs[i] * perspective, y: shape.ys[i] * perspective });
     }
 
     ctx.beginPath();

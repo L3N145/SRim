@@ -5,7 +5,7 @@ import { CreatureSound } from './sound';
 import { ResourceProvider } from './provider';
 import { Creature } from './creature';
 import { Renderer } from './renderer';
-import { collectNeighbors, collectRippleInfluences } from './world';
+import { collectNeighbors, collectRippleInfluences, resolveCollisions } from './world';
 import { createRipple, updateRipple, type Ripple } from './ripple';
 
 interface SavedCreatureState {
@@ -81,6 +81,9 @@ function loop(now: number) {
     const rippleInfluences = collectRippleInfluences(ripples, creatures[i].x, creatures[i].y, creatures[i].z);
     creatures[i].update(dt, bounds, collectNeighbors(creatures, i), rippleInfluences);
   }
+  // Resolve body-to-body contact after everyone has moved, using the contour
+  // each creature has this frame (including its current morphology).
+  resolveCollisions(creatures);
 
   // Birth is a real population event, not a two-core visual effect. The
   // parent remains and a nearby child inherits a few traits with variation.
@@ -256,14 +259,15 @@ function addOffspring(parent: Creature): void {
   };
   const child = new Creature(loadCreatureData(id, childData), sound, provider);
   const angle = seed * Math.PI * 2;
-  const separation = parent.getCollisionRadius() * 1.25;
+  const separation = parent.getCollisionRadius() * 1.7;
   child.x = parent.x + Math.cos(angle) * separation;
   child.y = parent.y + Math.sin(angle) * separation;
   child.z = parent.z + (seed - 0.5) * 10;
   child.heading = parent.heading + (seed - 0.5) * 1.2;
-  child.vx = parent.vx * 0.72 + Math.cos(angle) * 0.045;
-  child.vy = parent.vy * 0.72 + Math.sin(angle) * 0.045;
+  child.vx = parent.vx * 0.5 + Math.cos(angle) * 4;
+  child.vy = parent.vy * 0.5 + Math.sin(angle) * 4;
   child.vz = parent.vz * 0.72;
+  child.refreshBody();
   creatures.push(child);
 }
 

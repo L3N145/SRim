@@ -6,6 +6,37 @@ import { CreatureSound } from './sound';
 import { ResourceProvider } from './provider';
 import { DNAEngine, ConceptDNA } from './procedural';
 import type { NeighborInfluence, RippleInfluence } from './world';
+import { SeededRandom } from './random';
+import { buildColliders, computeBodyShape, createBodyShape, type Collider } from './body';
+
+/**
+ * Locomotion tuning. Units: px, seconds.
+ * Creatures swim by pulse-jetting: each pulse contracts the body and pushes it
+ * forward, then it glides and slowly decelerates in the water. There is no
+ * destination anywhere in the model.
+ *
+ *   average speed ~= dv * dragTau / period   (about 3-5 px/s with defaults)
+ *
+ * To make everything slower or faster, change SPEED_SCALE only.
+ */
+const SPEED_SCALE = 1.0;
+const LOCOMOTION = {
+  dvMin: 10 * SPEED_SCALE,      // forward speed gained per pulse (px/s)
+  dvMax: 16 * SPEED_SCALE,
+  basePeriod: 3.4,              // seconds between pulses
+  restChance: 0.22,             // chance a pulse is followed by a long glide
+  relaxTime: 1.6,               // seconds the bell takes to re-expand
+  dragTauMin: 0.9,              // seconds for glide speed to decay (e-fold)
+  dragTauMax: 1.7,
+};
+const WORLD = { xFrac: 0.34, xMax: 240, yFrac: 0.34, yMax: 320 };
+
+function angleDiff(target: number, from: number): number {
+  let d = target - from;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -49,43 +80,35 @@ export class Creature {
   // This is intentionally not a mathematically exact 1/f process; it is a
   // lightweight pink-noise-like approximation made from several time scales.
   bodyOrganic = 0;
-  // Soft-body travel deformation: the body lags behind changes in motion.
-  bodySquish = 0;
-  bodyStretch = 0;
+  // Pulse-jet swimming state.
+  swimContraction = 0;            // 0 = relaxed, 1 = bell fully contracted
+  bodySX = 1; bodySY = 1;         // body-local squeeze applied to the contour
+  boundRadius = 36;
+  mass = 1;
+  readonly shape = createBodyShape();
+  private readonly collisionShape = createBodyShape();
+  colliders: Collider[] = [];
   private organicPhase = 0;
 
   // Kinematic state is intentionally semantic-free.
   heading = 0;
   angularVelocity = 0;
-  private burst = 0;
   private preferredTurn = 1;
   private readonly behavior: BehaviorScheduler;
+  private readonly rng: SeededRandom;
   private morphStartedAt = -Infinity;
   private lastMorphReturnCheck = -Infinity;
   private morphReturning = false;
   private morphIntensity = 0;
   private lastNeighborCheck = -Infinity;
-  private motionSpeed = 22;
-  private motionSpeedTarget = 22;
-  // Short-lived locomotion intention: a direction tendency that persists for
-  // seconds instead of choosing a fresh random direction every frame.
-  private locomotionBias = 0;
-  private locomotionStrength = 0;
-  private locomotionUntil = -Infinity;
-  // Hidden, soft goals make movement look self-directed without exposing an
-  // explicit target to the observer. The goal changes occasionally, so the
-  // creature appears to have intentions rather than merely drifting.
-  private goalX = 0;
-  private goalY = 0;
-  private goalUntil = -Infinity;
-  private nextWanderChangeAt = -Infinity;
-  // Soft-body locomotion: velocity follows intention with a lag, then settles
-  // with a small overshoot. This makes movement feel bodily rather than like
-  // a cursor or particle being steered directly.
-  private movementLagX = 0;
-  private movementLagY = 0;
-  private bodySway = 0;
-  private wanderTargetTurn = 0;
+  private pulseT = 0;
+  private pulsePeriod = 3;
+  private readonly pulseContractTime: number;
+  private readonly pulseDv: number;
+  private readonly dragTau: number;
+  private pulseKick = 1;
+  private wanderTurn = 0;   // slow random walk of turning, re-drawn per pulse
+  private steerTurn = 0;    // transient turning from events, decays
   private divisionRequestedAt = -Infinity;
 
   constructor(data: CreatureData, sound: CreatureSound, provider: ResourceProvider) {
@@ -106,14 +129,18 @@ export class Creature {
     // population contains noticeably smaller bodies. This lowers the
     // average body size without changing the maximum.
     this.baseScale = 0.76 + fract(data.seed * 7.31) * 0.52;
-    this.nextWanderChangeAt = performance.now() / 1000 + 0.9 + fract(data.seed * 5.17) * 1.8;
-    this.locomotionBias = this.heading + (fract(data.seed * 3.71) - 0.5) * 0.8;
-    this.goalX = (fract(data.seed * 19.17) - 0.5) * 120;
-    this.goalY = (fract(data.seed * 29.31) - 0.5) * 150;
-    this.goalUntil = performance.now() / 1000 + 2.5 + fract(data.seed * 41.3) * 3.5;
+    this.rng = new SeededRandom(data.seed + 0.7311);
+    this.pulseContractTime = 0.85 + fract(data.seed * 5.1) * 0.35;
+    this.pulseDv = LOCOMOTION.dvMin + fract(data.seed * 3.3) * (LOCOMOTION.dvMax - LOCOMOTION.dvMin);
+    this.dragTau = LOCOMOTION.dragTauMin
+      + clamp((data.inertia - 0.8) / 0.185, 0, 1) * (LOCOMOTION.dragTauMax - LOCOMOTION.dragTauMin);
+    // Start at a random point of the pulse cycle so creatures never beat in unison.
+    this.pulsePeriod = LOCOMOTION.basePeriod * this.rng.range(0.85, 1.25);
+    this.pulseT = this.rng.range(0, this.pulsePeriod);
     this.activeDNA = DNAEngine.synthesize(data.seed);
     this.targetDNA = { ...this.activeDNA };
     this.currentHue = this.activeDNA.hue + data.colorHueOffset;
+    this.refreshBody();
   }
 
   update(
@@ -123,8 +150,6 @@ export class Creature {
     ripples: readonly RippleInfluence[] = [],
   ) {
     const safeDt = Math.min(Math.max(dt, 0), 0.1);
-    const previousVx = this.vx;
-    const previousVy = this.vy;
     const now = performance.now() / 1000;
     const lateNight = this.isLateNight();
     const micro = this.behavior.getMicroActivity();
@@ -184,157 +209,86 @@ export class Creature {
     this.bodyPulse += (pulse - this.bodyPulse) * Math.min(1, safeDt * 3.4);
     this.bodyTension += (tension - this.bodyTension) * Math.min(1, safeDt * 2.2);
     this.bodyOrganic += (organic * 0.43 - this.bodyOrganic) * Math.min(1, safeDt * 2.0);
-    const speedRhythm = 0.5 + 0.5 * Math.sin(this.phase * 0.19 + this.data.seed * 5.1);
-    const naturalTarget = 18 + micro * 9 + speedRhythm * 4;
-    this.motionSpeedTarget += (naturalTarget - this.motionSpeedTarget) * Math.min(1, safeDt * 0.34);
-    this.motionSpeed += (this.motionSpeedTarget - this.motionSpeed) * Math.min(1, safeDt * 0.82);
+    // --- Pulse-jet locomotion ------------------------------------------------
+    // The bell contracts (thrust + turning happen only here), then relaxes while
+    // the body glides and slows down. Speed therefore surges and fades with the
+    // body's own rhythm instead of being a constant cursor-like velocity.
+    this.pulseT += safeDt;
+    if (this.pulseT >= this.pulsePeriod) this.startPulse(1);
 
-    // Do not inject continuous random acceleration: that reads as floating
-    // noise. Instead, let the creature carry a hidden destination for a few
-    // seconds. The destination is not shown, so the observer has to infer an
-    // intention from the trajectory itself.
-    if (now >= this.goalUntil) {
-      const epoch = Math.floor(now / 6.0);
-      const gx = fract(this.data.seed * 19.17 + epoch * 0.731);
-      const gy = fract(this.data.seed * 29.31 + epoch * 0.917);
-      this.goalX = (gx - 0.5) * Math.min(bounds.width * 0.42, 260);
-      this.goalY = (gy - 0.5) * Math.min(bounds.height * 0.48, 320);
-      this.goalUntil = now + 4.0 + fract(this.data.seed * 41.3 + epoch * 1.37) * 5.5;
+    const tc = this.pulseContractTime;
+    let thrustProfile = 0;
+    let contraction = 0;
+    if (this.pulseT < tc) {
+      thrustProfile = Math.sin(Math.PI * this.pulseT / tc);
+      contraction = Math.sin((this.pulseT / tc) * Math.PI / 2);
+    } else {
+      const k = Math.min(1, (this.pulseT - tc) / LOCOMOTION.relaxTime);
+      contraction = Math.pow(Math.cos(k * Math.PI / 2), 2);
     }
+    this.swimContraction = contraction;
 
-    const goalAngle = Math.atan2(this.goalY - this.y, this.goalX - this.x);
-    let goalDelta = goalAngle - this.heading;
-    while (goalDelta > Math.PI) goalDelta -= Math.PI * 2;
-    while (goalDelta < -Math.PI) goalDelta += Math.PI * 2;
-
-    // A small persistent bias prevents perfect ballistic travel. The turn is
-    // strongest around moderate changes and eases into the new direction,
-    // echoing animacy work showing that direction-change dynamics matter while
-    // avoiding exaggerated, cartoon-like turns.
-    if (now >= this.locomotionUntil) {
-      const turnNoise = Math.sin(this.phase * 0.31 + this.data.seed * 13.7) * 0.18;
-      this.locomotionBias = goalDelta + turnNoise;
-      this.locomotionStrength = 0.18 + fract(this.data.seed * 17.3 + Math.floor(now / 5.0)) * 0.16;
-      this.locomotionUntil = now + 4.2 + fract(this.data.seed * 23.1 + Math.floor(now / 11.0)) * 5.0;
+    // Soft edge of the world: a gentle current plus a bias to turn inward.
+    // This is a wall, not a destination.
+    const limitX = Math.min(bounds.width * WORLD.xFrac, WORLD.xMax);
+    const limitY = Math.min(bounds.height * WORLD.yFrac, WORLD.yMax);
+    const ex = Math.max(0, (Math.abs(this.x) - limitX * 0.7) / (limitX * 0.3));
+    const ey = Math.max(0, (Math.abs(this.y) - limitY * 0.7) / (limitY * 0.3));
+    let wallTurn = 0;
+    if (ex > 0 || ey > 0) {
+      const inX = -Math.sign(this.x) * ex;
+      const inY = -Math.sign(this.y) * ey;
+      const mag = Math.min(1.6, Math.hypot(inX, inY));
+      wallTurn = clamp(angleDiff(Math.atan2(inY, inX), this.heading), -1, 1) * mag * 1.2;
+      this.vx += inX * 6 * safeDt;
+      this.vy += inY * 6 * safeDt;
     }
+    const limitZ = 80;
+    if (Math.abs(this.z) > limitZ) this.vz -= (this.z / limitZ) * 1.8 * safeDt;
 
-    let angleToBias = this.locomotionBias;
-    while (angleToBias > Math.PI) angleToBias -= Math.PI * 2;
-    while (angleToBias < -Math.PI) angleToBias += Math.PI * 2;
-    const steering = angleToBias * this.locomotionStrength;
-    this.angularVelocity += steering * safeDt * (0.22 + this.data.responsiveness * 0.10);
-
-    if (now >= this.nextWanderChangeAt) {
-      const wobble = Math.sin(this.phase * 1.73 + this.data.seed * 11.7);
-      this.wanderTargetTurn = wobble * (0.005 + this.data.responsiveness * 0.006);
-      this.nextWanderChangeAt = now + 5.0 + Math.abs(wobble) * 4.5;
-    }
-    this.angularVelocity += this.wanderTargetTurn * safeDt * 0.55;
-    this.angularVelocity += Math.sin(this.phase * 0.31 + this.data.seed * 4) * 0.0007 * safeDt;
-    this.angularVelocity *= Math.pow(0.92, safeDt * 60);
-    this.angularVelocity = clamp(this.angularVelocity, -0.0045, 0.0045);
-    this.heading += this.angularVelocity * 60 * safeDt;
-
-    // Pending events create a barely visible preparation. The user can notice
-    // that something is changing without being told what it means.
-    if (anticipation > 0) {
-      this.targetScale = 1 + anticipation * 0.025;
-      this.vx *= 1 - anticipation * 0.003;
-      this.vy *= 1 - anticipation * 0.003;
-    }
-
-    // A tap creates a temporary physical disturbance in the world. The
-    // creature receives only the geometry of the expanding ring; it does not
-    // receive a semantic instruction such as "move away".
-    this.applyRippleField(ripples, safeDt);
-
-    // Local multi-agent field. Creatures do not "know" each other's labels;
-    // they only respond to distance and velocity.
-    this.applyNeighborField(neighbors, safeDt);
+    this.steerTurn *= Math.exp(-safeDt / 3.5);
+    const turnRate = this.wanderTurn + this.steerTurn + wallTurn;
+    this.angularVelocity = turnRate * thrustProfile;
+    this.heading += this.angularVelocity * safeDt;
 
     const forwardX = Math.cos(this.heading);
     const forwardY = Math.sin(this.heading);
-    // Do not translate intention directly into position. The desired motion
-    // first passes through a soft lag, then the actual body follows it. The
-    // two-stage response creates the slight 'weight' and settling of a soft
-    // organism without making it sluggish.
-    const desiredVX = forwardX * this.motionSpeed;
-    const desiredVY = forwardY * this.motionSpeed;
-    const lag = Math.min(1, safeDt * (1.15 + this.data.responsiveness * 0.35));
-    this.movementLagX += (desiredVX - this.movementLagX) * lag;
-    this.movementLagY += (desiredVY - this.movementLagY) * lag;
-    const bodyFollow = Math.min(1, safeDt * (2.0 + this.data.inertia * 1.8));
-    this.vx += (this.movementLagX - this.vx) * bodyFollow;
-    this.vy += (this.movementLagY - this.vy) * bodyFollow;
-
-    // A very small lateral sway keeps the path from reading as perfectly
-    // ballistic. It is coupled to turning, so the body seems to lean into a
-    // change of direction and then gently recover.
-    const turnSway = Math.sin(this.phase * 0.52 + this.data.seed * 8.4) * 0.010;
-    this.bodySway += (turnSway - this.bodySway) * Math.min(1, safeDt * 1.4);
-    const swayX = -forwardY * this.bodySway;
-    const swayY = forwardX * this.bodySway;
-    this.vx += swayX * safeDt;
-    this.vy += swayY * safeDt;
-
-    if (this.burst > 0) {
-      // Bursts are still noticeable, but they are deliberately capped. The
-      // creature should never look like a projectile crossing the screen.
-      const burstForce = 7.5 * this.burst;
-      this.motionSpeedTarget = Math.min(38, this.motionSpeedTarget + 5 * this.burst);
-      this.vx += forwardX * burstForce * safeDt;
-      this.vy += forwardY * burstForce * safeDt;
-      this.burst = Math.max(0, this.burst - safeDt * 0.75);
+    if (thrustProfile > 0) {
+      // Integral of the profile over the contraction equals pulseDv * kick.
+      const accel = this.pulseDv * this.pulseKick * (Math.PI / (2 * tc)) * thrustProfile;
+      this.vx += forwardX * accel * safeDt;
+      this.vy += forwardY * accel * safeDt;
     }
 
-    const limitX = Math.min(bounds.width * 0.24, 150);
-    const limitY = Math.min(bounds.height * 0.24, 190);
-    const limitZ = 80;
-    if (Math.abs(this.x) > limitX) this.vx -= (this.x / limitX) * 1.6 * safeDt;
-    if (Math.abs(this.y) > limitY) this.vy -= (this.y / limitY) * 1.6 * safeDt;
-    if (Math.abs(this.z) > limitZ) this.vz -= (this.z / limitZ) * 1.8 * safeDt;
+    // Pending events create a barely visible preparation.
+    if (anticipation > 0) this.targetScale = 1 + anticipation * 0.025;
 
-    this.vx *= Math.pow(this.data.inertia, safeDt);
-    this.vy *= Math.pow(this.data.inertia, safeDt);
-    this.vz *= Math.pow(this.data.inertia, safeDt);
+    this.applyRippleField(ripples, safeDt);
+    this.applyNeighborField(neighbors, safeDt);
 
-    // Soft speed limit. Instead of clipping velocity abruptly, excess speed
-    // is removed gradually so acceleration/deceleration remain visible.
-    const speed = Math.hypot(this.vx, this.vy);
-    const maxSpeed = 34 + this.burst * 8;
-    if (speed > maxSpeed) {
-      const damping = Math.min(1, safeDt * 2.8);
-      const scale = 1 - damping * (1 - maxSpeed / speed);
-      this.vx *= scale;
-      this.vy *= scale;
-    }
+    // Water drag. Sideways motion is damped faster than forward motion, so the
+    // body carves through a turn instead of sliding like a puck.
+    const fwd = this.vx * forwardX + this.vy * forwardY;
+    const lat = -this.vx * forwardY + this.vy * forwardX;
+    const nf = fwd * Math.exp(-safeDt / this.dragTau);
+    const nl = lat * Math.exp(-safeDt / (this.dragTau * 0.45));
+    this.vx = forwardX * nf - forwardY * nl;
+    this.vy = forwardY * nf + forwardX * nl;
+    this.vz *= Math.exp(-safeDt / this.dragTau);
 
-    // The velocity lag above is the soft-body delay. Do not apply a second
-    // lag here: movementLagX/Y are velocity-space values, while stepX/stepY
-    // are world-space distances. Mixing those units was the v9.3 movement bug
-    // that made creatures barely translate while their heading kept changing.
-    // Keep position integration in world space so the body actually travels.
     this.x += this.vx * safeDt;
     this.y += this.vy * safeDt;
     this.z += this.vz * safeDt * 36;
 
-    // Let the body rotate toward its heading with a soft delay. Stopping and
-    // turning consequently have a tiny settling motion rather than a snap.
-    let headingDelta = this.heading - this.rotation;
-    while (headingDelta > Math.PI) headingDelta -= Math.PI * 2;
-    while (headingDelta < -Math.PI) headingDelta += Math.PI * 2;
+    // The body turns toward its heading with a soft delay and a slow passive wobble.
+    const wobble = Math.sin(this.organicPhase * 0.9 + this.data.seed * 6.1) * 0.05;
+    const headingDelta = angleDiff(this.heading + wobble, this.rotation);
     this.rotation += headingDelta * Math.min(1, safeDt * 1.9);
 
-    // Absorb acceleration into the body as a very restrained squash/stretch.
-    // The effect is intentionally subtle: physical softness, not cartoon slapstick.
-    const speedForShape = Math.hypot(this.vx, this.vy);
-    const accelerationProxy = Math.hypot(this.vx - previousVx, this.vy - previousVy) / Math.max(safeDt, 0.001);
-    const stretchTarget = clamp(accelerationProxy * 0.55 + speedForShape * 0.08, 0, 0.30);
-    const squishTarget = clamp(accelerationProxy * 0.34, 0, 0.18);
-    this.bodyStretch += (stretchTarget - this.bodyStretch) * Math.min(1, safeDt * 2.0);
-    this.bodySquish += (squishTarget - this.bodySquish) * Math.min(1, safeDt * 1.65);
+    this.bodySX = 1 + 0.05 * contraction;
+    this.bodySY = 1 - 0.14 * contraction;
 
-    const speedForBody = Math.min(1, Math.hypot(this.vx, this.vy) / 0.5);
+    const speedForBody = Math.min(1, Math.hypot(this.vx, this.vy) / 20);
     const turnForBody = Math.min(1, Math.abs(this.angularVelocity) * 2.8);
     const bodyScale = this.bodyBreath * (0.024 + micro * 0.035) + this.bodyPulse * 0.009 + this.bodyTension * 0.006
       + speedForBody * 0.006 - turnForBody * 0.004;
@@ -358,18 +312,45 @@ export class Creature {
     this.currentHue += (this.targetDNA.hue + this.data.colorHueOffset - this.currentHue) * Math.min(1, safeDt * 0.7);
     this.activity += (micro - this.activity) * Math.min(1, safeDt * 0.6);
     this.imageAlpha += (this.targetImageAlpha - this.imageAlpha) * Math.min(1, safeDt * 1.5);
+
+    // Rebuild contour + hitbox from the final state of this frame.
+    this.refreshBody();
   }
 
-  getCollisionRadius(): number {
-    let radius = 36 * this.scale;
-    radius *= 1 + this.bloom * 0.55;
-    radius *= 1 + this.spike * 0.25;
-    radius *= 1 + this.ribbon * 0.30;
-    radius *= 1 + this.crystalline * 0.16;
-    radius *= 1 + this.vortex * 0.12;
-    radius += this.stretch * 14;
-    return Math.max(24, Math.min(78, radius));
+  /** Recompute the visible contour and the hitbox from the same body state. */
+  refreshBody(): void {
+    computeBodyShape(this, this.shape, false);
+    computeBodyShape(this, this.collisionShape, true);
+    this.boundRadius = buildColliders(this.collisionShape, this.bodySX, this.bodySY, this.rotation, this.colliders);
+    let m = 0;
+    for (const c of this.colliders) m += c.r * c.r;
+    this.mass = Math.max(200, m);
   }
+
+  private startPulse(kick: number): void {
+    this.pulseT = 0;
+    this.pulseKick = kick;
+    this.wanderTurn = clamp(
+      this.wanderTurn * 0.55 + this.rng.range(-1, 1) * (0.28 + this.data.responsiveness * 0.3), -0.8, 0.8);
+    let period = LOCOMOTION.basePeriod * this.rng.range(0.85, 1.25);
+    if (this.rng.chance(LOCOMOTION.restChance)) period *= this.rng.range(1.5, 2.6);
+    if (kick > 1.2) period /= 1.3;
+    this.pulsePeriod = Math.max(period, this.pulseContractTime + 1.0);
+  }
+
+  /** Strengthen the current pulse, or start one right away if the bell is relaxed. */
+  private kickPulse(multiplier: number): void {
+    if (this.pulseT < this.pulseContractTime) this.pulseKick = Math.max(this.pulseKick, multiplier);
+    else this.startPulse(multiplier);
+  }
+
+  /** Called by the collision pass when a real impact happens. */
+  noteImpact(intensity: number): void {
+    this.bodyPulse += intensity * 0.5;
+    this.bodyTension += intensity * 0.3;
+  }
+
+  getCollisionRadius(): number { return this.boundRadius; }
 
   private applyRippleField(ripples: readonly RippleInfluence[], dt: number): void {
     for (const ripple of ripples) {
@@ -382,14 +363,14 @@ export class Creature {
       const ringDistance = Math.abs(distance - ripple.radius);
       const ringBand = Math.max(0, 1 - ringDistance / 34);
       const radial = ripple.strength * ringBand * (0.72 + this.data.responsiveness * 0.52);
-      this.vx += nx * radial * dt * 3.2;
-      this.vy += ny * radial * dt * 3.2;
+      this.vx += nx * radial * dt * 9;
+      this.vy += ny * radial * dt * 9;
 
       const tangentX = -ny;
       const tangentY = nx;
       const lateral = Math.sin(this.phase + ripple.radius * 0.035) * radial * 1.05;
-      this.vx += tangentX * lateral * dt * 1.7;
-      this.vy += tangentY * lateral * dt * 1.7;
+      this.vx += tangentX * lateral * dt * 3.5;
+      this.vy += tangentY * lateral * dt * 3.5;
 
     }
   }
@@ -397,24 +378,9 @@ export class Creature {
   private applyNeighborField(neighbors: readonly NeighborInfluence[], dt: number): void {
     for (const n of neighbors) {
       const distance = Math.max(n.distance, 0.001);
-      const contactRadius = this.getCollisionRadius() + n.collisionRadius;
-      const softRadius = contactRadius + 12;
-
-      if (distance < contactRadius) {
-        const penetration = contactRadius - distance;
-        const correction = Math.min(1.15, penetration * 0.18);
-        this.x -= (n.x / distance) * correction;
-        this.y -= (n.y / distance) * correction;
-
-        const overlapRatio = Math.min(1, penetration / Math.max(contactRadius, 1));
-        const strength = 0.045 + overlapRatio * 0.085;
-        this.vx -= (n.x / distance) * strength * dt;
-        this.vy -= (n.y / distance) * strength * dt;
-      } else if (distance < softRadius) {
-        const strength = (1 - (distance - contactRadius) / 12) * 0.022;
-        this.vx -= (n.x / distance) * strength * dt;
-        this.vy -= (n.y / distance) * strength * dt;
-      } else if (distance < 150) {
+      // Contact itself is resolved by the collision pass (world.ts) using the
+      // real body contour. Here only weak far-field coupling remains.
+      if (distance < 150) {
         // Very weak velocity coupling: enough for occasional apparent
         // coordination, but not enough to create contagious behavior.
         const coupling = n.proximity * 0.000075 * (0.35 + this.data.responsiveness);
@@ -465,6 +431,7 @@ export class Creature {
     this.targetRibbon = 0.0;
     this.targetVortex = 0.0;
     this.setMorphTargetsForAction(action);
+    if (action === 'giant') this.kickPulse(1.5);
     if (ENABLE_CREATURE_SOUNDS && action === 'bloom') this.sound.emitPurr(2.6);
   }
 
@@ -472,7 +439,7 @@ export class Creature {
     switch (action) {
       case 'spiky': this.targetScale = 1.04; this.targetSpike = 0.82; break;
       case 'bloom': this.targetScale = 1.10; this.targetBloom = 0.60; break;
-      case 'giant': this.targetScale = 1.58; this.targetBloom = 0.92; this.burst = Math.max(this.burst, 0.95); break;
+      case 'giant': this.targetScale = 1.58; this.targetBloom = 0.92; break;
       case 'compact': this.targetScale = 0.88; break;
       case 'droplet': this.targetStretch = 0.92; break;
       case 'crystalline': this.targetCrystalline = 0.82; break;
@@ -508,7 +475,6 @@ export class Creature {
       ribbon: this.ribbon, vortex: this.vortex,
       currentHue: this.currentHue,
       bodyBreath: this.bodyBreath, bodyPulse: this.bodyPulse, bodyTension: this.bodyTension,
-      bodySquish: this.bodySquish, bodyStretch: this.bodyStretch,
     };
   }
 
@@ -523,8 +489,6 @@ export class Creature {
     this.bodyBreath = num('bodyBreath', this.bodyBreath);
     this.bodyPulse = num('bodyPulse', this.bodyPulse);
     this.bodyTension = num('bodyTension', this.bodyTension);
-    this.bodySquish = num('bodySquish', this.bodySquish);
-    this.bodyStretch = num('bodyStretch', this.bodyStretch);
     this.scale = num('scale', this.scale); this.spike = num('spike', this.spike);
     this.bloom = num('bloom', this.bloom); this.stretch = num('stretch', this.stretch);
     this.crystalline = num('crystalline', this.crystalline); this.ribbon = num('ribbon', this.ribbon);
@@ -537,6 +501,7 @@ export class Creature {
       this.morphReturning = false;
       this.setMorphTargetsForAction(this.currentAction);
     }
+    this.refreshBody();
   }
 
   handleTouch(screenWorldX: number, screenWorldY: number) {
@@ -553,7 +518,7 @@ export class Creature {
     if (dist < reach) {
       const safeDist = Math.max(12, dist);
       const proximity = 1 - Math.min(dist, reach) / reach;
-      const impulse = 0.12 + proximity * 0.26;
+      const impulse = 2.5 + proximity * 8; // px/s: a visible push of the water
       this.vx += (dx / safeDist) * impulse;
       this.vy += (dy / safeDist) * impulse;
       // A nearby disturbance also creates a tiny bodily contraction, making
@@ -604,22 +569,19 @@ export class Creature {
         break;
       case 'orbit':
         if (nearest) {
-          this.angularVelocity += this.preferredTurn * 0.003;
-          this.motionSpeedTarget = Math.min(30, this.motionSpeedTarget + 2.5);
+          this.steerTurn = clamp(this.steerTurn + this.preferredTurn * 0.35, -1, 1);
         }
         break;
       case 'hesitate':
-        this.vx *= 0.72;
-        this.vy *= 0.72;
-        this.motionSpeedTarget = Math.max(11, this.motionSpeedTarget * 0.78);
-        this.angularVelocity += this.preferredTurn * 0.003;
+        // Stop beating for a moment: the body just glides and slows.
+        this.pulsePeriod = Math.max(this.pulsePeriod, this.pulseT + this.rng.range(2.0, 3.6));
+        this.steerTurn = clamp(this.steerTurn + this.preferredTurn * 0.15, -1, 1);
         break;
       case 'burst':
-        this.burst = Math.max(this.burst, 0.55 + event.anticipation * 0.42);
-        this.motionSpeedTarget = Math.min(36, this.motionSpeedTarget + 7);
+        this.kickPulse(1.35 + event.anticipation * 0.4);
         break;
       case 'drift':
-        this.angularVelocity += this.preferredTurn * 0.0012;
+        this.steerTurn = clamp(this.steerTurn + this.preferredTurn * 0.12, -1, 1);
         break;
       case 'expand': this.applyMorph('bloom'); break;
       case 'contract': this.applyMorph('compact'); break;
@@ -651,12 +613,10 @@ export class Creature {
     while (delta > Math.PI) delta -= Math.PI * 2;
     while (delta < -Math.PI) delta += Math.PI * 2;
 
-    // Direction changes are expressed as turning rather than teleport-like
-    // velocity impulses. This gives approach/retreat/orbit events a biological
-    // feel: the creature has to turn before its trajectory changes.
-    const turn = Math.max(-0.032, Math.min(0.032, delta)) * strength;
-    this.angularVelocity += turn;
-    this.motionSpeedTarget = Math.min(31, this.motionSpeedTarget + strength * 7);
+    // Steering only biases the turning that happens during pulses, so the body
+    // has to beat and swing around before its path changes.
+    this.steerTurn = clamp(this.steerTurn + clamp(delta, -1.2, 1.2) * strength * 8, -1.2, 1.2);
+    if (this.pulseT > this.pulseContractTime + 0.6) this.pulsePeriod = Math.min(this.pulsePeriod, this.pulseT + 0.8);
   }
 
   private isLateNight(): boolean {

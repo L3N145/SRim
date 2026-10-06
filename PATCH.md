@@ -35,3 +35,22 @@
 - Touch no longer schedules a behavior or morphology event. A tap only creates a physical disturbance: ripple field, local impulse, and a small transient body response.
 - Removed the touch behavior path that could choose morphologies after a short delay. This makes tap→morphology causality much harder to read.
 - Widened individual base-scale range from `1.00–1.28` to `0.76–1.28`. The maximum is unchanged, while smaller bodies are substantially more common and the population average is lower.
+
+
+## v10 — pulse-jet locomotion, no destinations, contour-based collision
+
+**Locomotion (creature.ts)**
+- Removed the hidden goal (`goalX/goalY`), locomotion bias, constant `motionSpeed` and the velocity-lag chain.
+- Creatures now swim by pulse-jetting: the bell contracts, thrust and turning happen only during the contraction, then the body relaxes and glides while water drag slows it. Speed surges and fades with the body's own rhythm.
+- Sideways velocity is damped faster than forward velocity, so turns carve instead of sliding.
+- Pulse timing is individual (random phase, period jitter, occasional long glides). Heading follows a slow random walk re-drawn per pulse; there is no target.
+- The world edge is a soft wall (gentle current + inward turning bias), not a destination.
+- Typical speed is now ~3-5 px/s average, ~10-20 px/s at the peak of a pulse (was a constant 18-34 px/s). Tune everything with `SPEED_SCALE` / `LOCOMOTION` at the top of creature.ts.
+- Events were remapped onto the pulse model: burst = stronger/immediate pulse, hesitate = skip beats and glide, approach/retreat/orbit/drift = turning bias applied during pulses.
+- The roaming area was widened (`WORLD`, ~34% of the screen instead of ~24%, capped at 240x320 px).
+
+**Body and collision (body.ts, world.ts)**
+- The contour is computed once per frame in `computeBodyShape` and used by BOTH the renderer and the hitbox, so a morphology change changes the hitbox in the same frame.
+- The hitbox is a chain of circles sliced from the current contour (round body = 1 circle, ribbon/droplet = a chain). Squeeze from the pulse is included; spikes count at 75%.
+- `resolveCollisions` runs after all creatures update: overlap is removed from both bodies (heavier moves less), approach velocity is cancelled with a small bounce, and off-centre contact turns the body slightly. 4 iterations per frame.
+- Tap impulse and ripple force were retuned for px/s units.
