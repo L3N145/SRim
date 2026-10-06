@@ -7,6 +7,10 @@ import { ResourceProvider } from './provider';
 import { DNAEngine, ConceptDNA } from './procedural';
 import type { NeighborInfluence, RippleInfluence } from './world';
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
 const ENABLE_CREATURE_SOUNDS = false;
 const ENABLE_ONLINE_RESOURCE_ACTIONS = true;
 
