@@ -162,14 +162,33 @@ export class Renderer {
     ctx.lineWidth = 1.0 + spike * 0.8 + cryst * 0.5;
     ctx.stroke();
 
-    const corePulse = breath * 1.9 + pulse * 1.1 + organic * 0.48 + Math.sin(phase * 0.6) * 0.45;
-    const coreRadius = Math.max(3, (7.5 + bloom * 4.0 + corePulse) * perspective);
-    const coreGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, coreRadius * 1.8);
-    coreGrad.addColorStop(0, '#ffffff');
-    coreGrad.addColorStop(0.35, `hsla(${hue - 20}, 100%, 90%, ${(0.85 + bloom * 0.1) * perspective})`);
-    coreGrad.addColorStop(0.75, `hsla(${hue}, 85%, 65%, ${0.25 * perspective})`);
+    // The core is deliberately dimmer and less spherical than before. An
+    // irregular, slowly changing flicker makes it read more like a tiny living
+    // filament than a bright LED or energy orb. The target changes at uneven
+    // intervals and is smoothly interpolated, so the light never becomes a
+    // metronome.
+    const flickerClock = phase * 0.58 + creature.data.seed * 13.7;
+    const flickerStep = Math.floor(flickerClock);
+    const flickerT = flickerClock - flickerStep;
+    const hash = (n: number) => {
+      const x = Math.sin(n * 12.9898 + creature.data.seed * 78.233) * 43758.5453;
+      return x - Math.floor(x);
+    };
+    const flickerA = hash(flickerStep);
+    const flickerB = hash(flickerStep + 1);
+    const smoothFlickerT = flickerT * flickerT * (3 - 2 * flickerT);
+    const flickerTarget = 0.70 + 0.18 * (flickerA * 0.65 + flickerB * 0.35);
+    const nextFlickerTarget = 0.70 + 0.18 * (flickerB * 0.65 + hash(flickerStep + 2) * 0.35);
+    const flicker = flickerTarget + (nextFlickerTarget - flickerTarget) * smoothFlickerT;
+    const organicFlicker = 0.96 + 0.04 * Math.sin(phase * 2.7 + creature.data.seed * 4.1);
+    const corePulse = breath * 0.9 + pulse * 0.48 + organic * 0.18;
+    const coreRadius = Math.max(2.2, (5.8 + bloom * 2.0 + corePulse * 0.7) * perspective);
+    const coreGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, coreRadius * 1.65);
+    coreGrad.addColorStop(0, `rgba(255,255,255,${0.68 * flicker * organicFlicker * perspective})`);
+    coreGrad.addColorStop(0.32, `hsla(${hue - 20}, 100%, 90%, ${(0.50 + bloom * 0.05) * flicker * perspective})`);
+    coreGrad.addColorStop(0.72, `hsla(${hue}, 85%, 65%, ${0.12 * flicker * perspective})`);
     coreGrad.addColorStop(1, 'transparent');
-    ctx.beginPath(); ctx.arc(0, 0, coreRadius * 1.8, 0, Math.PI * 2); ctx.fillStyle = coreGrad; ctx.fill();
+    ctx.beginPath(); ctx.arc(0, 0, coreRadius * 1.65, 0, Math.PI * 2); ctx.fillStyle = coreGrad; ctx.fill();
     ctx.restore();
 
     // A rare external image appears as if it is inside the creature, like

@@ -72,6 +72,12 @@ export class Creature {
   private locomotionBias = 0;
   private locomotionStrength = 0;
   private locomotionUntil = -Infinity;
+  // Hidden, soft goals make movement look self-directed without exposing an
+  // explicit target to the observer. The goal changes occasionally, so the
+  // creature appears to have intentions rather than merely drifting.
+  private goalX = 0;
+  private goalY = 0;
+  private goalUntil = -Infinity;
   private nextWanderChangeAt = -Infinity;
   // Soft-body locomotion: velocity follows intention with a lag, then settles
   // with a small overshoot. This makes movement feel bodily rather than like
@@ -102,6 +108,9 @@ export class Creature {
     this.baseScale = 0.76 + fract(data.seed * 7.31) * 0.52;
     this.nextWanderChangeAt = performance.now() / 1000 + 0.9 + fract(data.seed * 5.17) * 1.8;
     this.locomotionBias = this.heading + (fract(data.seed * 3.71) - 0.5) * 0.8;
+    this.goalX = (fract(data.seed * 19.17) - 0.5) * 120;
+    this.goalY = (fract(data.seed * 29.31) - 0.5) * 150;
+    this.goalUntil = performance.now() / 1000 + 2.5 + fract(data.seed * 41.3) * 3.5;
     this.activeDNA = DNAEngine.synthesize(data.seed);
     this.targetDNA = { ...this.activeDNA };
     this.currentHue = this.activeDNA.hue + data.colorHueOffset;
@@ -180,30 +189,40 @@ export class Creature {
     this.motionSpeedTarget += (naturalTarget - this.motionSpeedTarget) * Math.min(1, safeDt * 0.34);
     this.motionSpeed += (this.motionSpeedTarget - this.motionSpeed) * Math.min(1, safeDt * 0.82);
 
-    // Keep locomotion soft: it should feel massive and viscous rather than steered.
-    const wandering = 0.105 + micro * 0.22;
-    const noiseX = Math.sin(this.phase * 0.73 + this.data.seed * 8.1);
-    const noiseY = Math.cos(this.phase * 0.57 + this.data.seed * 5.7);
-    this.vx += noiseX * wandering * safeDt;
-    this.vy += noiseY * wandering * safeDt;
-
-    // Ordinary locomotion has a short-lived, non-semantic direction tendency.
-    // The tendency lasts for seconds, so motion has continuity rather than
-    // becoming a frame-by-frame random walk.
-    if (now >= this.locomotionUntil) {
-      const turnNoise = Math.sin(this.phase * 0.47 + this.data.seed * 13.7);
-      const drift = (fract(this.data.seed * 31.7 + Math.floor(now / 7.0)) - 0.5) * 1.1;
-      this.locomotionBias = this.heading + turnNoise * 0.55 + drift * 0.35;
-      this.locomotionStrength = 0.20 + fract(this.data.seed * 17.3 + Math.floor(now / 5.0)) * 0.34;
-      this.locomotionUntil = now + 3.6 + fract(this.data.seed * 23.1 + Math.floor(now / 11.0)) * 5.5;
+    // Do not inject continuous random acceleration: that reads as floating
+    // noise. Instead, let the creature carry a hidden destination for a few
+    // seconds. The destination is not shown, so the observer has to infer an
+    // intention from the trajectory itself.
+    if (now >= this.goalUntil) {
+      const epoch = Math.floor(now / 6.0);
+      const gx = fract(this.data.seed * 19.17 + epoch * 0.731);
+      const gy = fract(this.data.seed * 29.31 + epoch * 0.917);
+      this.goalX = (gx - 0.5) * Math.min(bounds.width * 0.42, 260);
+      this.goalY = (gy - 0.5) * Math.min(bounds.height * 0.48, 320);
+      this.goalUntil = now + 4.0 + fract(this.data.seed * 41.3 + epoch * 1.37) * 5.5;
     }
 
-    const angleToBias = Math.atan2(
-      Math.sin(this.locomotionBias - this.heading),
-      Math.cos(this.locomotionBias - this.heading),
-    );
+    const goalAngle = Math.atan2(this.goalY - this.y, this.goalX - this.x);
+    let goalDelta = goalAngle - this.heading;
+    while (goalDelta > Math.PI) goalDelta -= Math.PI * 2;
+    while (goalDelta < -Math.PI) goalDelta += Math.PI * 2;
+
+    // A small persistent bias prevents perfect ballistic travel. The turn is
+    // strongest around moderate changes and eases into the new direction,
+    // echoing animacy work showing that direction-change dynamics matter while
+    // avoiding exaggerated, cartoon-like turns.
+    if (now >= this.locomotionUntil) {
+      const turnNoise = Math.sin(this.phase * 0.31 + this.data.seed * 13.7) * 0.18;
+      this.locomotionBias = goalDelta + turnNoise;
+      this.locomotionStrength = 0.32 + fract(this.data.seed * 17.3 + Math.floor(now / 5.0)) * 0.26;
+      this.locomotionUntil = now + 2.8 + fract(this.data.seed * 23.1 + Math.floor(now / 11.0)) * 4.2;
+    }
+
+    let angleToBias = this.locomotionBias;
+    while (angleToBias > Math.PI) angleToBias -= Math.PI * 2;
+    while (angleToBias < -Math.PI) angleToBias += Math.PI * 2;
     const steering = angleToBias * this.locomotionStrength;
-    this.angularVelocity += steering * safeDt * (0.38 + this.data.responsiveness * 0.24);
+    this.angularVelocity += steering * safeDt * (0.62 + this.data.responsiveness * 0.28);
 
     if (now >= this.nextWanderChangeAt) {
       const wobble = Math.sin(this.phase * 1.73 + this.data.seed * 11.7);
@@ -212,7 +231,7 @@ export class Creature {
     }
     this.angularVelocity += this.wanderTargetTurn * safeDt;
     this.angularVelocity += Math.sin(this.phase * 0.31 + this.data.seed * 4) * 0.004 * safeDt;
-    this.angularVelocity *= Math.pow(0.968, safeDt * 60);
+    this.angularVelocity *= Math.pow(0.952, safeDt * 60);
     this.heading += this.angularVelocity * 60 * safeDt;
 
     // Pending events create a barely visible preparation. The user can notice
