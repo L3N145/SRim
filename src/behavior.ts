@@ -219,7 +219,7 @@ export class BehaviorScheduler {
       const tendency = clamp(this.profile.morphTendency[morph] ?? 1, 0.18, 2.8);
       const recency = this.recentMorphs.reduce((score, action, index) =>
         action === morph ? score + (index + 1) / this.recentMorphs.length : score, 0);
-      entry.weight *= tendency * Math.max(0.32, 1 - recency * 0.20);
+      entry.weight *= tendency * Math.max(0.22, 1 - recency * 0.24);
     }
 
     const action = this.rng.weighted(pool as Array<{ item: BehaviorAction; weight: number }>);
@@ -239,13 +239,13 @@ export class BehaviorScheduler {
     // tendency multiplier below, not from giving bloom/droplet extra routes.
     return [
       { item: 'spiky', weight: 1.0 * scale },
-      { item: 'bloom', weight: 0.85 * scale },
-      { item: 'compact', weight: 0.95 * scale },
-      { item: 'droplet', weight: 0.95 * scale },
-      { item: 'crystalline', weight: 0.95 * scale },
-      { item: 'ribbon', weight: 0.95 * scale },
-      { item: 'vortex', weight: 0.85 * scale },
-      { item: 'giant', weight: 0.20 * scale },
+      { item: 'bloom', weight: 1.0 * scale },
+      { item: 'compact', weight: 1.0 * scale },
+      { item: 'droplet', weight: 1.0 * scale },
+      { item: 'crystalline', weight: 1.0 * scale },
+      { item: 'ribbon', weight: 1.0 * scale },
+      { item: 'vortex', weight: 1.0 * scale },
+      { item: 'giant', weight: 1.0 * scale },
     ];
   }
 

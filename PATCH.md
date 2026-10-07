@@ -89,3 +89,12 @@ dynamics, so that its regularities can only be found by interpretation.
 - Measured against a finer re-sampling of the drawn contour: spiky max overlap ~2.6 px (was ~26), mixed morphs ~3.4 px (was ~20), >3 px in 5 of 5400 frames.
 - Cost with 12 crowded spiky bodies: ~1 ms/frame average.
 - Known limit: two thin spikes can cross without either tip lying inside the other body; this is rare at the current 64-point contour.
+
+
+## v10 morphology + animacy pass
+- Removed global morphology rarity: all eight special morphologies now have equal baseline access. Individual persistent morphology tendencies determine which forms are common or rare for each creature.
+- Increased morphology tendency variance using a shared broad distribution; existing v2/signature-2 tendencies are preserved.
+- Strengthened recent-form suppression slightly to reduce repetitive consecutive forms without banning any form.
+- Added correlated multi-scale trajectory fluctuations and tiny lateral acceleration.
+- Added small pulse-to-pulse acceleration variation.
+- Strengthened soft principal-axis alignment between body rotation and travel heading.

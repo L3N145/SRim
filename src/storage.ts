@@ -50,7 +50,7 @@ export function loadCreatureData(instanceId = '0', defaults?: Partial<CreatureDa
     baseFrequency: clamp(finiteOr(source?.baseFrequency, 200 + pseudo(4) * 120), 120, 420),
     colorHueOffset: clamp(finiteOr(source?.colorHueOffset, Math.floor(pseudo(5) * 60) - 30), -60, 60),
     morphTendency: normalizeMorphTendency(source?.morphTendency, seed, source?.morphSignatureVersion),
-    morphSignatureVersion: 1,
+    morphSignatureVersion: 2,
     recentActions: normalizeActions(source?.recentActions),
     instanceId,
   };
@@ -145,20 +145,17 @@ function normalizeMorphTendency(value: unknown, seed: number, signatureVersion?:
   // Give each creature 1–2 recognizable "signature" forms. The old v8
   // fallback lived in a narrow 0.55–1.45 band, which was not strong enough
   // to survive the many other event-weight differences in the scheduler.
-  const ranked = names
-    .map((name, i) => ({ name, score: seededValue(seed, 70 + i) }))
-    .sort((a, b) => b.score - a.score);
-  const primary = new Set(ranked.slice(0, 2).map((entry) => entry.name));
-  const hasV9Signature = signatureVersion === 1;
+  const hasV10Signature = signatureVersion === 2;
 
   const result = {} as MorphTendency;
   names.forEach((name, i) => {
-    const legacy = hasV9Signature && obj && typeof obj[name] === 'number' && Number.isFinite(obj[name])
+    const legacy = hasV10Signature && obj && typeof obj[name] === 'number' && Number.isFinite(obj[name])
       ? obj[name] as number : null;
     const score = seededValue(seed, 30 + i);
-    const fallback = primary.has(name)
-      ? 2.05 + score * 0.75
-      : 0.32 + score * 0.52;
+    // Every morphology uses the same broad distribution. There is no globally
+    // rare shape; rarity is an individual property produced by this spread.
+    const centered = (score - 0.5) * 2.0;
+    const fallback = clamp(Math.exp(centered * 0.95), 0.30, 2.75);
     result[name] = clamp(legacy ?? fallback, 0.18, 2.8);
   });
   return result;

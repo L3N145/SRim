@@ -99,6 +99,7 @@ export class Creature {
   readonly shape = createBodyShape();
   readonly hull = createHull();
   private organicPhase = 0;
+  private trajectoryPhase = 0;
 
   // Kinematic state is intentionally semantic-free.
   heading = 0;
@@ -220,6 +221,7 @@ export class Creature {
     // requiring a dedicated "social behavior" or "emotion" state.
     this.phase += safeDt * (0.18 + micro * 1.55);
     this.organicPhase += safeDt * (0.42 + this.data.baseViscosity * 0.9);
+    this.trajectoryPhase += safeDt * (0.24 + this.data.responsiveness * 0.18);
     this.vigor = this.computeVigor();
 
     // Three time scales keep the body alive even when locomotion is quiet:
@@ -285,16 +287,31 @@ export class Creature {
 
     this.steerTurn *= Math.exp(-safeDt / 3.5);
     const turnRate = this.wanderTurn + this.steerTurn + wallTurn;
-    this.angularVelocity = turnRate * thrustProfile;
+    // Correlated trajectory fluctuation: a slow curve plus a much smaller
+    // fine-scale component. This is not frame-wise random walk.
+    const slowCurve = Math.sin(this.trajectoryPhase * 0.73 + this.data.seed * 8.7) * 0.010
+      + Math.sin(this.trajectoryPhase * 0.31 + this.data.seed * 3.2) * 0.006;
+    const fineCurve = Math.sin(this.trajectoryPhase * 3.7 + this.data.seed * 17.1) * 0.004;
+    this.angularVelocity = turnRate * thrustProfile + slowCurve + fineCurve;
     this.heading += this.angularVelocity * safeDt;
 
     const forwardX = Math.cos(this.heading);
     const forwardY = Math.sin(this.heading);
     if (thrustProfile > 0) {
-      // Integral of the profile over the contraction equals pulseDv * kick.
-      const accel = this.pulseDv * this.pulseKick * (Math.PI / (2 * tc)) * thrustProfile;
+      // Small pulse-to-pulse acceleration variation keeps propulsion from being
+      // perfectly periodic while retaining a coherent swimming rhythm.
+      const accelVariation = 1
+        + 0.075 * Math.sin(this.trajectoryPhase * 1.17 + this.data.seed * 5.4)
+        + 0.035 * Math.sin(this.trajectoryPhase * 4.1 + this.data.seed * 12.2);
+      const accel = this.pulseDv * this.pulseKick * (Math.PI / (2 * tc)) * thrustProfile * accelVariation;
       this.vx += forwardX * accel * safeDt;
       this.vy += forwardY * accel * safeDt;
+
+      // Tiny lateral acceleration creates imperfect but correlated trajectories.
+      const lateral = Math.sin(this.trajectoryPhase * 1.43 + this.data.seed * 10.1) * 0.030
+        + Math.sin(this.trajectoryPhase * 5.3 + this.data.seed * 2.7) * 0.012;
+      this.vx += -forwardY * lateral * safeDt;
+      this.vy += forwardX * lateral * safeDt;
     }
 
     // Pending events create a barely visible preparation.
@@ -319,8 +336,10 @@ export class Creature {
 
     // The body turns toward its heading with a soft delay and a slow passive wobble.
     const wobble = Math.sin(this.organicPhase * 0.9 + this.data.seed * 6.1) * 0.05;
+    // Principal-axis alignment: the body follows its travel axis with a soft
+    // delay, so elongated forms read as self-propelled rather than dragged.
     const headingDelta = angleDiff(this.heading + wobble, this.rotation);
-    this.rotation += headingDelta * Math.min(1, safeDt * 1.9);
+    this.rotation += headingDelta * Math.min(1, safeDt * 2.35);
 
     this.bodySX = 1 + 0.05 * contraction;
     this.bodySY = 1 - 0.14 * contraction;
